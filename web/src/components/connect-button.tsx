@@ -14,16 +14,8 @@ function shortAddress(addr: string) {
   return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
 }
 
-const WC_ID = "walletConnect";
-
 function sortConnectors(list: readonly Connector[]) {
-  const arr = [...list];
-  return arr.sort((a, b) => {
-    const aWc = a.id === WC_ID;
-    const bWc = b.id === WC_ID;
-    if (aWc !== bWc) return aWc ? 1 : -1;
-    return a.name.localeCompare(b.name);
-  });
+  return [...list].sort((a, b) => a.name.localeCompare(b.name));
 }
 
 export function ConnectButton() {
@@ -35,7 +27,6 @@ export function ConnectButton() {
   const rootRef = useRef<HTMLDivElement>(null);
 
   const sorted = sortConnectors(connectors);
-  const hasWc = sorted.some((c) => c.id === WC_ID);
 
   useEffect(() => {
     if (!open) return;
@@ -93,8 +84,7 @@ export function ConnectButton() {
   if (sorted.length === 0) {
     return (
       <p className="text-xs text-zinc-500">
-        No wallets found yet. Install a browser extension, or set{" "}
-        <code className="font-mono">NEXT_PUBLIC_WC_PROJECT_ID</code> for WalletConnect.
+        No browser wallet found. Install a wallet extension (e.g. MetaMask) and refresh.
       </p>
     );
   }
@@ -136,30 +126,13 @@ export function ConnectButton() {
                   />
                 ) : (
                   <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-zinc-100 text-[9px] font-medium text-zinc-500">
-                    {c.id === WC_ID ? "WC" : c.name.slice(0, 1)}
+                    {c.name.slice(0, 1)}
                   </span>
                 )}
-                <span className="min-w-0 flex-1 font-medium">
-                  {c.id === WC_ID
-                    ? "WalletConnect (mobile & QR)"
-                    : c.name}
-                </span>
+                <span className="min-w-0 flex-1 font-medium">{c.name}</span>
               </button>
             </li>
           ))}
-          {!hasWc && (
-            <li className="border-t border-zinc-100 px-3 py-2 text-[10px] text-amber-800">
-              For phone or QR: add a free project id:{" "}
-              <a
-                className="font-mono underline"
-                href="https://cloud.reown.com"
-                rel="noreferrer"
-                target="_blank"
-              >
-                NEXT_PUBLIC_WC_PROJECT_ID
-              </a>
-            </li>
-          )}
         </ul>
       )}
     </div>
