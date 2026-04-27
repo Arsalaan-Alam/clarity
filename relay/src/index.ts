@@ -21,14 +21,29 @@ type RelayJob = {
   createdAt: number;
 };
 
+type DeliverableRecord = {
+  jobId: number;
+  ciphertext: string;
+  iv: string;
+  authTag: string;
+  algorithm: "aes-256-gcm";
+  updatedAt: number;
+};
+
 const app = new Hono();
 
 const jobs: RelayJob[] = [];
 const events: JobEvent[] = [];
+const deliverables = new Map<number, DeliverableRecord>();
 
 app.get("/health", (c) => c.json({ ok: true, service: "clarity-relay" }));
 
-app.get("/relay/jobs", (c) => c.json({ jobs }));
+app.get("/relay/jobs", (c) => {
+  const status = c.req.query("status");
+  const filtered = status ? jobs.filter((j) => j.status === status) : jobs;
+  const sorted = [...filtered].sort((a, b) => b.createdAt - a.createdAt);
+  return c.json({ jobs: sorted });
+});
 
 app.get("/relay/jobs/:id", (c) => {
   const id = Number(c.req.param("id"));
@@ -37,8 +52,16 @@ app.get("/relay/jobs/:id", (c) => {
 
   return c.json({
     job,
-    timeline: events.filter((e) => e.jobId === id),
+    timeline: events.filter((e) => e.jobId === id).sort((a, b) => a.at - b.at),
   });
+});
+
+app.get("/relay/events", (c) => {
+  const jobId = c.req.query("jobId");
+  if (!jobId) return c.json({ events: [...events].sort((a, b) => a.at - b.at) });
+  const id = Number(jobId);
+  const timeline = events.filter((e) => e.jobId === id).sort((a, b) => a.at - b.at);
+  return c.json({ events: timeline });
 });
 
 app.post("/relay/events", async (c) => {
@@ -62,6 +85,38 @@ app.post("/relay/events", async (c) => {
   events.push(event);
 
   return c.json({ ok: true, eventId: event.id });
+});
+
+app.post("/relay/deliverables", async (c) => {
+  const body = await c.req.json<{
+    jobId: number;
+    ciphertext: string;
+    iv: string;
+    authTag: string;
+    algorithm?: "aes-256-gcm";
+  }>();
+
+  if (!Number.isFinite(body.jobId) || body.jobId <= 0) {
+    return c.json({ error: "invalid_job_id" }, 400);
+  }
+
+  const record: DeliverableRecord = {
+    jobId: body.jobId,
+    ciphertext: body.ciphertext,
+    iv: body.iv,
+    authTag: body.authTag,
+    algorithm: body.algorithm || "aes-256-gcm",
+    updatedAt: Date.now(),
+  };
+  deliverables.set(body.jobId, record);
+  return c.json({ ok: true, jobId: body.jobId });
+});
+
+app.get("/relay/deliverables/:jobId", (c) => {
+  const jobId = Number(c.req.param("jobId"));
+  const record = deliverables.get(jobId);
+  if (!record) return c.json({ error: "deliverable_not_found" }, 404);
+  return c.json(record);
 });
 
 const port = Number(process.env.PORT || 8787);

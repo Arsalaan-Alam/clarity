@@ -1,9 +1,17 @@
-import { decodeEventLog, type Address } from "viem";
-import { BASE_SEPOLIA_CHAIN_ID, CLARITY_PRIVATE_KEY, ESCROW_ADDRESS, USDC_ADDRESS, requireAddress } from "./config.js";
+import { type Address } from "viem";
+import {
+  BASE_SEPOLIA_CHAIN_ID,
+  CLARITY_DELIVERABLE_SECRET,
+  CLARITY_PRIVATE_KEY,
+  ESCROW_ADDRESS,
+  USDC_ADDRESS,
+  requireAddress,
+} from "./config.js";
 import { clarityEscrowAbi } from "./abi/escrow.js";
 import { usdcAbi } from "./abi/usdc.js";
 import { assertChain, formatUsdc, getAccount, getWalletClient, normalizeAddress, parseUsdc, publicClient, toBytes32 } from "./protocol.js";
 import { postRelayEvent } from "./relay.js";
+import { decryptDeliverable, encryptDeliverable } from "./encryption.js";
 
 const COMMANDS = [
   "setup_wallet",
@@ -15,6 +23,8 @@ const COMMANDS = [
   "complete_job",
   "reject_job",
   "get_job",
+  "read_deliverable",
+  "sync_job",
   "list_jobs",
 ] as const;
 
@@ -27,6 +37,17 @@ function usage() {
 function parseArgs(argv: string[]) {
   const [, , command, ...args] = argv;
   return { command, args };
+}
+
+function extractPrivateKeyArg(args: string[]) {
+  const idx = args.findIndex((v) => v === "--pk");
+  if (idx === -1) return { privateKey: undefined as string | undefined, filteredArgs: args };
+  const value = args[idx + 1];
+  if (!value || value.startsWith("--")) {
+    throw new Error("Usage error: --pk requires a private key value.");
+  }
+  const filteredArgs = [...args.slice(0, idx), ...args.slice(idx + 2)];
+  return { privateKey: value, filteredArgs };
 }
 
 function parseJobResult(raw: readonly unknown[]) {
@@ -72,12 +93,12 @@ async function getJob(jobId: bigint) {
   return parseJobResult(raw);
 }
 
-async function setupWallet() {
+async function setupWallet(privateKey?: string) {
   await assertChain();
-  if (!CLARITY_PRIVATE_KEY) {
+  if (!privateKey && !CLARITY_PRIVATE_KEY) {
     throw new Error("CLARITY_PRIVATE_KEY is missing.");
   }
-  const account = getAccount();
+  const account = getAccount(privateKey);
   console.log(
     JSON.stringify(
       {
@@ -91,8 +112,8 @@ async function setupWallet() {
   );
 }
 
-async function getWalletInfo() {
-  const account = getAccount();
+async function getWalletInfo(privateKey?: string) {
+  const account = getAccount(privateKey);
   const usdcAddress = requireAddress(USDC_ADDRESS, "CLARITY_USDC_ADDRESS");
   const balance = await publicClient.readContract({
     address: usdcAddress,
@@ -103,14 +124,25 @@ async function getWalletInfo() {
   console.log(JSON.stringify({ address: account.address, usdc: formatUsdc(balance) }, null, 2));
 }
 
-async function createJob(providerArg: string, evaluatorArg: string, expiresInSecArg: string, descriptionArg: string) {
-  const wallet = getWalletClient();
-  const account = getAccount();
+async function createJob(
+  providerArg: string,
+  evaluatorArg: string,
+  expiresInSecArg: string,
+  descriptionArg: string,
+  privateKey?: string,
+) {
+  const wallet = getWalletClient(privateKey);
+  const account = getAccount(privateKey);
   const escrowAddress = requireAddress(ESCROW_ADDRESS, "CLARITY_ESCROW_ADDRESS");
   const provider = normalizeAddress(providerArg);
   const evaluator = normalizeAddress(evaluatorArg);
   const expiresAt = BigInt(Math.floor(Date.now() / 1000) + Number(expiresInSecArg));
   const descriptionCid = toBytes32(descriptionArg);
+  const beforeCount = await publicClient.readContract({
+    address: escrowAddress,
+    abi: clarityEscrowAbi,
+    functionName: "jobCount",
+  });
 
   const hash = await wallet.writeContract({
     address: escrowAddress,
@@ -120,28 +152,14 @@ async function createJob(providerArg: string, evaluatorArg: string, expiresInSec
     account,
     chain: wallet.chain,
   });
-  const receipt = await publicClient.waitForTransactionReceipt({ hash });
-  let createdJobId: bigint | null = null;
-  for (const log of receipt.logs) {
-    try {
-      const parsed = decodeEventLog({ abi: clarityEscrowAbi, data: log.data, topics: log.topics });
-      if (parsed.eventName === "JobCreated") {
-        if (!Array.isArray(parsed.args) && "jobId" in parsed.args) {
-          createdJobId = parsed.args.jobId as bigint;
-        }
-        break;
-      }
-    } catch {
-      continue;
-    }
-  }
-  if (createdJobId === null) {
-    const count = await publicClient.readContract({
-      address: escrowAddress,
-      abi: clarityEscrowAbi,
-      functionName: "jobCount",
-    });
-    createdJobId = count;
+  await publicClient.waitForTransactionReceipt({ hash });
+  const createdJobId = await publicClient.readContract({
+    address: escrowAddress,
+    abi: clarityEscrowAbi,
+    functionName: "jobCount",
+  });
+  if (createdJobId <= beforeCount) {
+    throw new Error(`create_job did not advance jobCount (before=${beforeCount}, after=${createdJobId})`);
   }
 
   await postRelayEvent({
@@ -162,9 +180,9 @@ async function createJob(providerArg: string, evaluatorArg: string, expiresInSec
   console.log(JSON.stringify({ ok: true, jobId: createdJobId.toString(), txHash: hash }, null, 2));
 }
 
-async function setBudget(jobIdArg: string, amountArg: string) {
-  const wallet = getWalletClient();
-  const account = getAccount();
+async function setBudget(jobIdArg: string, amountArg: string, privateKey?: string) {
+  const wallet = getWalletClient(privateKey);
+  const account = getAccount(privateKey);
   const escrowAddress = requireAddress(ESCROW_ADDRESS, "CLARITY_ESCROW_ADDRESS");
   const jobId = BigInt(jobIdArg);
   const amount = parseUsdc(amountArg);
@@ -195,9 +213,9 @@ async function setBudget(jobIdArg: string, amountArg: string) {
   console.log(JSON.stringify({ ok: true, jobId: jobId.toString(), budgetUsdc: amountArg, txHash: hash }, null, 2));
 }
 
-async function fund(jobIdArg: string) {
-  const wallet = getWalletClient();
-  const account = getAccount();
+async function fund(jobIdArg: string, privateKey?: string) {
+  const wallet = getWalletClient(privateKey);
+  const account = getAccount(privateKey);
   const escrowAddress = requireAddress(ESCROW_ADDRESS, "CLARITY_ESCROW_ADDRESS");
   const usdcAddress = requireAddress(USDC_ADDRESS, "CLARITY_USDC_ADDRESS");
   const jobId = BigInt(jobIdArg);
@@ -253,12 +271,13 @@ async function fund(jobIdArg: string) {
   );
 }
 
-async function submitWork(jobIdArg: string, deliverableArg: string) {
-  const wallet = getWalletClient();
-  const account = getAccount();
+async function submitWork(jobIdArg: string, deliverableArg: string, privateKey?: string) {
+  const wallet = getWalletClient(privateKey);
+  const account = getAccount(privateKey);
   const escrowAddress = requireAddress(ESCROW_ADDRESS, "CLARITY_ESCROW_ADDRESS");
   const jobId = BigInt(jobIdArg);
-  const deliverableCid = toBytes32(deliverableArg);
+  const encrypted = await encryptDeliverable(deliverableArg, CLARITY_DELIVERABLE_SECRET);
+  const deliverableCid = toBytes32(`enc:${encrypted.ciphertext.slice(0, 20)}`);
 
   const hash = await wallet.writeContract({
     address: escrowAddress,
@@ -269,6 +288,18 @@ async function submitWork(jobIdArg: string, deliverableArg: string) {
     chain: wallet.chain,
   });
   await publicClient.waitForTransactionReceipt({ hash });
+
+  const deliverableStoreRes = await fetch(`${process.env.CLARITY_API_URL || "http://localhost:8787"}/relay/deliverables`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      jobId: Number(jobId),
+      ...encrypted,
+    }),
+  });
+  if (!deliverableStoreRes.ok) {
+    throw new Error(`Failed to store encrypted deliverable: ${deliverableStoreRes.status}`);
+  }
 
   const job = await getJob(jobId);
   await postRelayEvent({
@@ -288,9 +319,9 @@ async function submitWork(jobIdArg: string, deliverableArg: string) {
   console.log(JSON.stringify({ ok: true, jobId: jobId.toString(), txHash: hash }, null, 2));
 }
 
-async function completeJob(jobIdArg: string) {
-  const wallet = getWalletClient();
-  const account = getAccount();
+async function completeJob(jobIdArg: string, privateKey?: string) {
+  const wallet = getWalletClient(privateKey);
+  const account = getAccount(privateKey);
   const escrowAddress = requireAddress(ESCROW_ADDRESS, "CLARITY_ESCROW_ADDRESS");
   const jobId = BigInt(jobIdArg);
   const hash = await wallet.writeContract({
@@ -321,9 +352,9 @@ async function completeJob(jobIdArg: string) {
   console.log(JSON.stringify({ ok: true, jobId: jobId.toString(), txHash: hash }, null, 2));
 }
 
-async function rejectJob(jobIdArg: string) {
-  const wallet = getWalletClient();
-  const account = getAccount();
+async function rejectJob(jobIdArg: string, privateKey?: string) {
+  const wallet = getWalletClient(privateKey);
+  const account = getAccount(privateKey);
   const escrowAddress = requireAddress(ESCROW_ADDRESS, "CLARITY_ESCROW_ADDRESS");
   const jobId = BigInt(jobIdArg);
   const hash = await wallet.writeContract({
@@ -356,17 +387,31 @@ async function rejectJob(jobIdArg: string) {
 
 async function printJob(jobIdArg: string) {
   const job = await getJob(BigInt(jobIdArg));
+  const payload = {
+    ...job,
+    budget: job.budget.toString(),
+    budgetUsdc: formatUsdc(job.budget),
+    statusText: statusFromIndex(job.status),
+  };
   console.log(
-    JSON.stringify(
-      {
-        ...job,
-        budgetUsdc: formatUsdc(job.budget),
-        statusText: statusFromIndex(job.status),
-      },
-      null,
-      2,
-    ),
+    JSON.stringify(payload, null, 2),
   );
+}
+
+async function readDeliverable(jobIdArg: string) {
+  const jobId = Number(jobIdArg);
+  const res = await fetch(`${process.env.CLARITY_API_URL || "http://localhost:8787"}/relay/deliverables/${jobId}`);
+  if (!res.ok) {
+    throw new Error(`Failed to fetch deliverable: ${res.status}`);
+  }
+  const payload = (await res.json()) as {
+    ciphertext: string;
+    iv: string;
+    authTag: string;
+    algorithm: "aes-256-gcm";
+  };
+  const plaintext = await decryptDeliverable(payload, CLARITY_DELIVERABLE_SECRET);
+  console.log(JSON.stringify({ jobId, plaintext }, null, 2));
 }
 
 async function listJobs() {
@@ -378,9 +423,33 @@ async function listJobs() {
   console.log(JSON.stringify(data, null, 2));
 }
 
+async function syncJob(jobIdArg: string) {
+  const escrowAddress = requireAddress(ESCROW_ADDRESS, "CLARITY_ESCROW_ADDRESS");
+  const jobId = BigInt(jobIdArg);
+  const job = await getJob(jobId);
+
+  await postRelayEvent({
+    jobId: Number(jobId),
+    eventType: "job:synced",
+    status: statusFromIndex(job.status),
+    txHash: "0xsync",
+    job: {
+      chainId: BASE_SEPOLIA_CHAIN_ID,
+      escrow: escrowAddress,
+      client: job.client,
+      provider: job.provider,
+      evaluator: job.evaluator,
+      descriptionCid: job.descriptionCid,
+    },
+  });
+
+  console.log(JSON.stringify({ ok: true, jobId: jobId.toString(), status: statusFromIndex(job.status) }, null, 2));
+}
+
 async function main() {
   await assertChain();
   const { command, args } = parseArgs(process.argv);
+  const { privateKey, filteredArgs: toolArgs } = extractPrivateKeyArg(args);
 
   if (!command) {
     usage();
@@ -389,38 +458,46 @@ async function main() {
 
   switch (command) {
     case "setup_wallet":
-      await setupWallet();
+      await setupWallet(privateKey);
       return;
     case "get_wallet_info":
-      await getWalletInfo();
+      await getWalletInfo(privateKey);
       return;
     case "create_job":
-      if (args.length < 4) throw new Error("Usage: create_job <provider> <evaluator> <expiresInSeconds> <descriptionCidOrShortText>");
-      await createJob(args[0], args[1], args[2], args[3]);
+      if (toolArgs.length < 4) throw new Error("Usage: create_job <provider> <evaluator> <expiresInSeconds> <descriptionCidOrShortText> [--pk <privateKey>]");
+      await createJob(toolArgs[0], toolArgs[1], toolArgs[2], toolArgs[3], privateKey);
       return;
     case "set_budget":
-      if (args.length < 2) throw new Error("Usage: set_budget <jobId> <amountUsdc>");
-      await setBudget(args[0], args[1]);
+      if (toolArgs.length < 2) throw new Error("Usage: set_budget <jobId> <amountUsdc> [--pk <privateKey>]");
+      await setBudget(toolArgs[0], toolArgs[1], privateKey);
       return;
     case "fund_job":
-      if (args.length < 1) throw new Error("Usage: fund_job <jobId>");
-      await fund(args[0]);
+      if (toolArgs.length < 1) throw new Error("Usage: fund_job <jobId> [--pk <privateKey>]");
+      await fund(toolArgs[0], privateKey);
       return;
     case "submit_work":
-      if (args.length < 2) throw new Error("Usage: submit_work <jobId> <deliverableCidOrShortText>");
-      await submitWork(args[0], args[1]);
+      if (toolArgs.length < 2) throw new Error("Usage: submit_work <jobId> <deliverableCidOrShortText> [--pk <privateKey>]");
+      await submitWork(toolArgs[0], toolArgs[1], privateKey);
       return;
     case "complete_job":
-      if (args.length < 1) throw new Error("Usage: complete_job <jobId>");
-      await completeJob(args[0]);
+      if (toolArgs.length < 1) throw new Error("Usage: complete_job <jobId> [--pk <privateKey>]");
+      await completeJob(toolArgs[0], privateKey);
       return;
     case "reject_job":
-      if (args.length < 1) throw new Error("Usage: reject_job <jobId>");
-      await rejectJob(args[0]);
+      if (toolArgs.length < 1) throw new Error("Usage: reject_job <jobId> [--pk <privateKey>]");
+      await rejectJob(toolArgs[0], privateKey);
       return;
     case "get_job":
-      if (args.length < 1) throw new Error("Usage: get_job <jobId>");
-      await printJob(args[0]);
+      if (toolArgs.length < 1) throw new Error("Usage: get_job <jobId>");
+      await printJob(toolArgs[0]);
+      return;
+    case "read_deliverable":
+      if (toolArgs.length < 1) throw new Error("Usage: read_deliverable <jobId>");
+      await readDeliverable(toolArgs[0]);
+      return;
+    case "sync_job":
+      if (toolArgs.length < 1) throw new Error("Usage: sync_job <jobId>");
+      await syncJob(toolArgs[0]);
       return;
     case "list_jobs":
       await listJobs();

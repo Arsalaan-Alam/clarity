@@ -78,4 +78,16 @@ export const clarityEscrowAbi = [
     inputs: [],
     outputs: [{ name: "", type: "uint256" }],
   },
+  {
+    type: "event",
+    name: "JobCreated",
+    inputs: [
+      { indexed: true, name: "jobId", type: "uint256" },
+      { indexed: true, name: "client", type: "address" },
+      { indexed: false, name: "provider", type: "address" },
+      { indexed: false, name: "evaluator", type: "address" },
+      { indexed: false, name: "descriptionCid", type: "bytes32" },
+      { indexed: false, name: "expiresAt", type: "uint64" },
+    ],
+  },
 ] as const;

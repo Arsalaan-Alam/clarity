@@ -9,10 +9,10 @@ import {
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { baseSepolia } from "viem/chains";
-import { BASE_SEPOLIA_CHAIN_ID, CLARITY_RPC_URL } from "./config.js";
+import { BASE_SEPOLIA_CHAIN_ID, CLARITY_PRIVATE_KEY, CLARITY_RPC_URL } from "./config.js";
 
-export function getAccount() {
-  const pk = process.env.CLARITY_PRIVATE_KEY;
+export function getAccount(privateKey?: string) {
+  const pk = privateKey || CLARITY_PRIVATE_KEY || process.env.CLARITY_PRIVATE_KEY;
   if (!pk) {
     throw new Error("CLARITY_PRIVATE_KEY is required for write operations.");
   }
@@ -24,9 +24,9 @@ export const publicClient = createPublicClient({
   transport: http(CLARITY_RPC_URL),
 });
 
-export function getWalletClient() {
+export function getWalletClient(privateKey?: string) {
   return createWalletClient({
-    account: getAccount(),
+    account: getAccount(privateKey),
     chain: baseSepolia,
     transport: http(CLARITY_RPC_URL),
   });

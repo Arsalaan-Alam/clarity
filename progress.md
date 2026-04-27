@@ -47,3 +47,36 @@
   - `ClarityEscrow` at `0xB324Ba16A17055AfbB1470d3E5B019cDfE54bA85` (`tx: 0xa207eb683efeee9611e2768c9957c8bb7d95e0e37c8d35eba42de5a7f6a340c9`)
 - Minted `10,000 mUSDC` to deployer wallet (`tx: 0x3d2141c4d3e48a6acbc9ad0dbed7537c1f276a3c20b32bc2d77025887bee4ee8`).
 - Updated `.env` with deployed `CLARITY_USDC_ADDRESS` and `CLARITY_ESCROW_ADDRESS`.
+- Added multi-actor execution support to MCP:
+  - `mcp/src/protocol.ts` now supports optional private key override per command.
+  - `mcp/src/index.ts` now accepts `--pk <privateKey>` for role-specific execution (`provider`/`evaluator`) without editing env.
+- Fixed `.env` formatting for role keys by adding named vars:
+  - `CLARITY_PROVIDER_PRIVATE_KEY`
+  - `CLARITY_EVALUATOR_PRIVATE_KEY`
+- Fixed `get_job` output serialization in `mcp/src/index.ts` by converting bigint `budget` to string before JSON output.
+- Added `sync_job` command to `mcp/src/index.ts` to reconcile relay status from on-chain state (`job:synced` event), useful when relay misses lifecycle updates.
+- Upgraded relay API in `relay/src/index.ts`:
+  - `GET /relay/jobs` now supports `?status=` filter and returns newest-first.
+  - `GET /relay/jobs/:id` returns timeline sorted by timestamp.
+  - Added `GET /relay/events?jobId=...` for direct timeline reads.
+  - Added encrypted deliverable storage endpoints:
+    - `POST /relay/deliverables`
+    - `GET /relay/deliverables/:jobId`
+- Added `mcp/src/encryption.ts` with AES-256-GCM encrypt/decrypt helpers.
+- Updated `mcp/src/config.ts` with `CLARITY_DELIVERABLE_SECRET`.
+- Updated `mcp/src/index.ts`:
+  - `submit_work` now encrypts deliverable and stores ciphertext in relay.
+  - added `read_deliverable <jobId>` command to decrypt stored deliverables.
+- Fixed Node crypto typing compatibility in `mcp/src/encryption.ts` by using explicit `Uint8Array` inputs for cipher/decipher operations.
+- Reworked `mcp/src/encryption.ts` to Web Crypto AES-GCM (`webcrypto.subtle`) for type-safe encryption/decryption in current TS config.
+- Updated `mcp/src/index.ts` to await async encryption/decryption helpers.
+- Added `JobCreated` event definition to `mcp/src/abi/escrow.ts` and improved `create_job` jobId resolution using pre-transaction `jobCount + 1` fallback.
+- Simplified `create_job` jobId resolution in `mcp/src/index.ts`:
+  - now uses authoritative post-transaction `jobCount` read from chain
+  - asserts jobCount increments after create
+- Verified new encrypted deliverable flow on-chain + relay:
+  - created/funded/submitted `jobId=2`
+  - `read_deliverable 2` successfully decrypted plaintext
+  - `GET /relay/events?jobId=2` returns ordered timeline entries
+- Removed `progress.txt`; tracking now only in `progress.md`.
+- Added root `README.md` with one-shot backend execution flow (relay startup + end-to-end MCP command chain).
