@@ -38,7 +38,17 @@ cd ../web && npm install
 
 ## Frontend (`web/`)
 
-Next.js app (Base Sepolia, wagmi, minimal UI).
+Next.js app (Base Sepolia, wagmi, minimal UI). **Connect** opens a list of available wallets: each **browser extension** that supports [EIP-6963](https://eips.ethereum.org/EIPS/eip-6963) (MetaMask, Rabby, etc.) plus **WalletConnect** if configured. Add to `web/.env.local`:
+
+```bash
+# Optional but recommended: enables “WalletConnect (mobile & QR)” in the list
+# https://cloud.reown.com
+NEXT_PUBLIC_WC_PROJECT_ID=your_reown_project_id
+# DApp URL for WalletConnect / Reown metadata (https in production)
+NEXT_PUBLIC_APP_URL=http://localhost:3000
+```
+
+You can use installed extensions with **no** project id; add one for phone / QR / 1000+ WalletConnect wallets. No paid keys besides whatever your RPC provider needs (`NEXT_PUBLIC_RPC_URL`).
 
 ```bash
 cd web && npm run dev
