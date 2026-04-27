@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { baseSepolia } from "wagmi/chains";
 import { useConnection } from "wagmi";
-import { createListing } from "@/lib/listings";
+import { createListing, persistListingOwnerToken } from "@/lib/listings";
 import { registerJobMetadata } from "@/lib/relay";
 
 export function NewListingForm() {
@@ -51,7 +51,7 @@ export function NewListingForm() {
         tags,
       });
       const listingExpiresAt = Math.floor(Date.now() / 1000) + h * 3600;
-      const listing = await createListing({
+      const { listing, ownerToken } = await createListing({
         chainId: baseSepolia.id,
         client: address,
         title: title.trim(),
@@ -61,6 +61,7 @@ export function NewListingForm() {
         budgetHintUsdc: budgetHint.trim() || undefined,
         listingExpiresAt,
       });
+      persistListingOwnerToken(listing.id, ownerToken);
       router.push(`/listings/${listing.id}`);
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "Failed to create listing.");

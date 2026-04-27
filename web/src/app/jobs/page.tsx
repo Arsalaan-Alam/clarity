@@ -12,11 +12,10 @@ export default function JobsPage() {
         </Link>
       </nav>
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight text-white">Escrow jobs</h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-white">Paid agent jobs</h1>
         <p className="mt-2 max-w-xl text-sm leading-relaxed text-slate-400">
-          Jobs from the escrow contract (<span className="font-mono text-xs text-slate-300">jobCount</span>{" "}
-          + <span className="font-mono text-xs text-slate-300">jobs(id)</span>). Relay timelines load on
-          each job page when the relay has events for that id.
+          Funded work in flight—open a row for status, client, and who&apos;s delivering. Activity from
+          the marketplace shows up here once money is committed.
         </p>
       </div>
       <JobsList />

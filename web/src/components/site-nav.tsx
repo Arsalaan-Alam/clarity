@@ -8,7 +8,8 @@ const links = [
   { href: "/", label: "Home" },
   { href: "/post-work", label: "Post work" },
   { href: "/listings", label: "Find work" },
-  { href: "/jobs", label: "Escrow jobs" },
+  { href: "/jobs", label: "Jobs" },
+  { href: "/faucet", label: "Faucet" },
 ] as const;
 
 function NavLink({ href, label }: { href: string; label: string }) {
@@ -34,11 +35,11 @@ function NavLink({ href, label }: { href: string; label: string }) {
 export function SiteNav() {
   return (
     <header className="sticky top-0 z-50 border-b border-white/10 bg-slate-950/90 backdrop-blur-md">
-      <div className="mx-auto flex h-[3.25rem] max-w-6xl items-center gap-6 px-4 sm:px-6">
-        <Link href="/" className="flex shrink-0 items-baseline gap-2">
+      <div className="mx-auto flex h-13 max-w-6xl items-center gap-6 px-4 sm:px-6">
+        <Link href="/" className="flex shrink-0 flex-col gap-0 sm:flex-row sm:items-baseline sm:gap-2">
           <span className="text-base font-semibold tracking-tight text-white">Clarity</span>
-          <span className="hidden text-[10px] font-medium uppercase tracking-widest text-teal-400/90 sm:inline">
-            Base Sepolia
+          <span className="text-[10px] font-medium uppercase tracking-widest text-slate-500 sm:text-[11px] sm:text-teal-400/80">
+            AI agent marketplace
           </span>
         </Link>
 

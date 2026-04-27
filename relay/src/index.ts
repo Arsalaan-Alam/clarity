@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { serve } from "@hono/node-server";
@@ -91,6 +92,9 @@ const metadataByHash = new Map<string, { canonical: string }>();
 
 let nextListingId = 1;
 let nextBidId = 1;
+
+/** Proves control of listing for cancel / accept / onchain (not sent on GET). */
+const listingOwnerTokens = new Map<number, string>();
 
 app.get("/health", (c) => c.json({ ok: true, service: "clarity-relay" }));
 
@@ -229,7 +233,9 @@ app.post("/relay/listings", async (c) => {
     createdAt: Date.now(),
   };
   listings.push(listing);
-  return c.json({ listing });
+  const ownerToken = randomBytes(32).toString("hex");
+  listingOwnerTokens.set(listing.id, ownerToken);
+  return c.json({ listing, ownerToken });
 });
 
 app.post("/relay/listings/:id/bids", async (c) => {
@@ -280,9 +286,14 @@ app.post("/relay/listings/:id/accept", async (c) => {
     client: string;
     bidId: number;
     evaluator: string;
+    ownerToken: string;
   }>();
   if (!body.client || listing.client.toLowerCase() !== body.client.toLowerCase()) {
     return c.json({ error: "unauthorized_client" }, 403);
+  }
+  const expectedToken = listingOwnerTokens.get(listingId);
+  if (!expectedToken || body.ownerToken !== expectedToken) {
+    return c.json({ error: "invalid_owner_token" }, 403);
   }
   if (!isAddress(body.evaluator)) {
     return c.json({ error: "invalid_evaluator" }, 400);
@@ -312,12 +323,16 @@ app.post("/relay/listings/:id/cancel", async (c) => {
   const listingId = Number(c.req.param("id"));
   const listing = listings.find((l) => l.id === listingId);
   if (!listing) return c.json({ error: "listing_not_found" }, 404);
-  const body = await c.req.json<{ client: string }>();
+  const body = await c.req.json<{ client: string; ownerToken: string }>();
   if (!body.client || listing.client.toLowerCase() !== body.client.toLowerCase()) {
     return c.json({ error: "unauthorized_client" }, 403);
   }
-  if (listing.status === "onchain") {
-    return c.json({ error: "already_onchain" }, 400);
+  const expectedToken = listingOwnerTokens.get(listingId);
+  if (!expectedToken || body.ownerToken !== expectedToken) {
+    return c.json({ error: "invalid_owner_token" }, 403);
+  }
+  if (listing.status !== "open") {
+    return c.json({ error: "listing_not_open" }, 400);
   }
   listing.status = "cancelled";
   for (const b of marketBids) {
@@ -330,9 +345,13 @@ app.post("/relay/listings/:id/onchain", async (c) => {
   const listingId = Number(c.req.param("id"));
   const listing = listings.find((l) => l.id === listingId);
   if (!listing) return c.json({ error: "listing_not_found" }, 404);
-  const body = await c.req.json<{ client: string; escrowJobId: number }>();
+  const body = await c.req.json<{ client: string; escrowJobId: number; ownerToken: string }>();
   if (!body.client || listing.client.toLowerCase() !== body.client.toLowerCase()) {
     return c.json({ error: "unauthorized_client" }, 403);
+  }
+  const expectedToken = listingOwnerTokens.get(listingId);
+  if (!expectedToken || body.ownerToken !== expectedToken) {
+    return c.json({ error: "invalid_owner_token" }, 403);
   }
   if (listing.status !== "assigned") {
     return c.json({ error: "listing_not_assigned" }, 400);
@@ -405,6 +424,6 @@ app.get("/relay/deliverables/:jobId", (c) => {
   return c.json(record);
 });
 
-const port = Number(process.env.PORT || 8787);
+const port = Number(process.env.PORT || 8788);
 serve({ fetch: app.fetch, port });
 console.log(`[clarity-relay] listening on :${port}`);

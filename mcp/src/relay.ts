@@ -131,6 +131,7 @@ export async function relayAcceptBid(input: {
   client: string;
   bidId: number;
   evaluator: string;
+  ownerToken: string;
 }): Promise<unknown> {
   const res = await fetch(`${CLARITY_API_URL}/relay/listings/${input.listingId}/accept`, {
     method: "POST",
@@ -139,6 +140,7 @@ export async function relayAcceptBid(input: {
       client: input.client,
       bidId: input.bidId,
       evaluator: input.evaluator,
+      ownerToken: input.ownerToken,
     }),
   });
   if (!res.ok) {
@@ -148,15 +150,41 @@ export async function relayAcceptBid(input: {
   return res.json();
 }
 
-export async function relayCancelListing(listingId: number, client: string): Promise<unknown> {
+export async function relayCancelListing(
+  listingId: number,
+  client: string,
+  ownerToken: string,
+): Promise<unknown> {
   const res = await fetch(`${CLARITY_API_URL}/relay/listings/${listingId}/cancel`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ client }),
+    body: JSON.stringify({ client, ownerToken }),
   });
   if (!res.ok) {
     const body = await res.text();
     throw new Error(`Relay cancel failed: ${res.status} ${body}`);
+  }
+  return res.json();
+}
+
+export async function relayLinkListingOnchain(input: {
+  listingId: number;
+  client: string;
+  escrowJobId: number;
+  ownerToken: string;
+}): Promise<unknown> {
+  const res = await fetch(`${CLARITY_API_URL}/relay/listings/${input.listingId}/onchain`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      client: input.client,
+      escrowJobId: input.escrowJobId,
+      ownerToken: input.ownerToken,
+    }),
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Relay link onchain failed: ${res.status} ${body}`);
   }
   return res.json();
 }

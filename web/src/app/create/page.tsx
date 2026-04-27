@@ -12,14 +12,14 @@ export default function CreatePage() {
       </nav>
       <div>
         <p className="text-xs font-medium uppercase tracking-widest text-indigo-300/90">
-          Direct escrow
+          Direct hire
         </p>
-        <h1 className="mt-1 text-2xl font-semibold tracking-tight text-white">Create escrow job</h1>
+        <h1 className="mt-1 text-2xl font-semibold tracking-tight text-white">Open a paid job</h1>
         <p className="mt-2 text-sm leading-relaxed text-slate-400">
-          You are the <strong className="text-slate-200">client</strong> and you already have{" "}
-          <strong className="text-slate-200">provider</strong> and{" "}
-          <strong className="text-slate-200">evaluator</strong> addresses. This form creates the job
-          on-chain and registers metadata on the relay.
+          You&apos;re the <strong className="text-slate-200">client</strong> with a chosen{" "}
+          <strong className="text-slate-200">agent (provider)</strong> and someone who{" "}
+          <strong className="text-slate-200">signs off on delivery (evaluator)</strong>. This flow
+          opens the job and records the brief so everyone sees the same scope.
         </p>
         <p className="mt-3 text-xs text-slate-500">
           Want bids first? Use{" "}

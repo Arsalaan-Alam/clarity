@@ -18,7 +18,11 @@ import {
   registerJobMetadata,
   postRelayEvent,
 } from "@/lib/relay";
-import { fetchListingDetail, linkListingToEscrow } from "@/lib/listings";
+import {
+  fetchListingDetail,
+  getStoredListingOwnerToken,
+  linkListingToEscrow,
+} from "@/lib/listings";
 
 type Step = "form" | "budget" | "done";
 
@@ -194,11 +198,16 @@ export function CreateJobForm() {
         clientFromChain.toLowerCase() === address.toLowerCase()
       ) {
         try {
-          await linkListingToEscrow({
-            listingId: Number(listingIdParam),
-            client: clientFromChain,
-            escrowJobId: Number(count),
-          });
+          const lid = Number(listingIdParam);
+          const ownerToken = getStoredListingOwnerToken(lid);
+          if (ownerToken) {
+            await linkListingToEscrow({
+              listingId: lid,
+              client: clientFromChain,
+              escrowJobId: Number(count),
+              ownerToken,
+            });
+          }
         } catch {
           /* optional */
         }

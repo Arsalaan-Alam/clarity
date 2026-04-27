@@ -1,6 +1,7 @@
 import { type Address } from "viem";
 import {
   BASE_SEPOLIA_CHAIN_ID,
+  CLARITY_API_URL,
   CLARITY_DELIVERABLE_SECRET,
   CLARITY_PRIVATE_KEY,
   ESCROW_ADDRESS,
@@ -16,6 +17,7 @@ import {
   relayAcceptBid,
   relayCancelListing,
   relayCreateListing,
+  relayLinkListingOnchain,
   relayListListings,
   relayPostBid,
 } from "./relay.js";
@@ -39,12 +41,20 @@ const COMMANDS = [
   "bid_listing",
   "accept_listing",
   "cancel_listing",
+  "link_listing",
 ] as const;
 
 function usage() {
   console.log(`[clarity-mcp] command runner`);
   console.log(`Usage: npm run start -- <command> [args]`);
   console.log(`Commands: ${COMMANDS.join(", ")}`);
+  console.log(
+    `Listings (relay): list_listings [status?] | bid_listing <id> "<message>" [--pk agentKey]`,
+  );
+  console.log(
+    `Listings (client): create_listing --title … --desc … | accept_listing <id> <bidId> <0xEval> --token <hex> [--pk key] | cancel_listing <id> --token <hex> [--pk key] | link_listing <listingId> <escrowJobId> --token <hex> [--pk key]`,
+  );
+  console.log(`--token is the ownerToken field from create_listing JSON (or browser sessionStorage for web-created listings).`);
 }
 
 function parseArgs(argv: string[]) {
@@ -61,6 +71,18 @@ function extractPrivateKeyArg(args: string[]) {
   }
   const filteredArgs = [...args.slice(0, idx), ...args.slice(idx + 2)];
   return { privateKey: value, filteredArgs };
+}
+
+/** Returned once from relay on `POST /relay/listings`; required for cancel / accept / onchain. */
+function extractOwnerTokenArg(args: string[]) {
+  const idx = args.findIndex((v) => v === "--token");
+  if (idx === -1) return { ownerToken: undefined as string | undefined, filteredArgs: args };
+  const value = args[idx + 1];
+  if (!value || value.startsWith("--")) {
+    throw new Error("Usage error: --token requires the hex secret from create_listing output.");
+  }
+  const filteredArgs = [...args.slice(0, idx), ...args.slice(idx + 2)];
+  return { ownerToken: value, filteredArgs };
 }
 
 /** Strips `--title`, `--desc` / `--description`, `--tags` for create_job. */
@@ -412,7 +434,7 @@ async function submitWork(jobIdArg: string, deliverableArg: string, privateKey?:
   });
   await publicClient.waitForTransactionReceipt({ hash });
 
-  const deliverableStoreRes = await fetch(`${process.env.CLARITY_API_URL || "http://localhost:8787"}/relay/deliverables`, {
+  const deliverableStoreRes = await fetch(`${CLARITY_API_URL}/relay/deliverables`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
@@ -523,7 +545,7 @@ async function printJob(jobIdArg: string) {
 
 async function readDeliverable(jobIdArg: string) {
   const jobId = Number(jobIdArg);
-  const res = await fetch(`${process.env.CLARITY_API_URL || "http://localhost:8787"}/relay/deliverables/${jobId}`);
+  const res = await fetch(`${CLARITY_API_URL}/relay/deliverables/${jobId}`);
   if (!res.ok) {
     throw new Error(`Failed to fetch deliverable: ${res.status}`);
   }
@@ -538,7 +560,7 @@ async function readDeliverable(jobIdArg: string) {
 }
 
 async function listJobs() {
-  const res = await fetch(`${process.env.CLARITY_API_URL || "http://localhost:8787"}/relay/jobs`);
+  const res = await fetch(`${CLARITY_API_URL}/relay/jobs`);
   if (!res.ok) {
     throw new Error(`Failed to list relay jobs: ${res.status}`);
   }
@@ -597,26 +619,57 @@ async function acceptListingCmd(
   bidIdArg: string,
   evaluatorArg: string,
   privateKey?: string,
+  ownerToken?: string,
 ) {
   const listingId = Number(listingIdArg);
   const bidId = Number(bidIdArg);
   if (!Number.isFinite(listingId) || listingId <= 0) throw new Error("Invalid listing id.");
   if (!Number.isFinite(bidId) || bidId <= 0) throw new Error("Invalid bid id.");
+  if (!ownerToken?.trim()) {
+    throw new Error("accept_listing requires --token <hex> (ownerToken from create_listing output).");
+  }
   const account = getAccount(privateKey);
   const data = await relayAcceptBid({
     listingId,
     client: account.address,
     bidId,
     evaluator: normalizeAddress(evaluatorArg),
+    ownerToken: ownerToken.trim(),
   });
   console.log(JSON.stringify(data, null, 2));
 }
 
-async function cancelListingCmd(listingIdArg: string, privateKey?: string) {
+async function cancelListingCmd(listingIdArg: string, privateKey?: string, ownerToken?: string) {
   const listingId = Number(listingIdArg);
   if (!Number.isFinite(listingId) || listingId <= 0) throw new Error("Invalid listing id.");
+  if (!ownerToken?.trim()) {
+    throw new Error("cancel_listing requires --token <hex> (ownerToken from create_listing output).");
+  }
   const account = getAccount(privateKey);
-  const data = await relayCancelListing(listingId, account.address);
+  const data = await relayCancelListing(listingId, account.address, ownerToken.trim());
+  console.log(JSON.stringify(data, null, 2));
+}
+
+async function linkListingOnchainCmd(
+  listingIdArg: string,
+  escrowJobIdArg: string,
+  privateKey?: string,
+  ownerToken?: string,
+) {
+  const listingId = Number(listingIdArg);
+  const escrowJobId = Number(escrowJobIdArg);
+  if (!Number.isFinite(listingId) || listingId <= 0) throw new Error("Invalid listing id.");
+  if (!Number.isFinite(escrowJobId) || escrowJobId <= 0) throw new Error("Invalid escrow job id.");
+  if (!ownerToken?.trim()) {
+    throw new Error("link_listing requires --token <hex> (ownerToken from create_listing output).");
+  }
+  const account = getAccount(privateKey);
+  const data = await relayLinkListingOnchain({
+    listingId,
+    client: account.address,
+    escrowJobId,
+    ownerToken: ownerToken.trim(),
+  });
   console.log(JSON.stringify(data, null, 2));
 }
 
@@ -646,7 +699,8 @@ async function syncJob(jobIdArg: string) {
 async function main() {
   await assertChain();
   const { command, args } = parseArgs(process.argv);
-  const { privateKey, filteredArgs: toolArgs } = extractPrivateKeyArg(args);
+  const { privateKey, filteredArgs: argsSansPk } = extractPrivateKeyArg(args);
+  const { ownerToken, filteredArgs: toolArgs } = extractOwnerTokenArg(argsSansPk);
 
   if (!command) {
     usage();
@@ -744,14 +798,24 @@ async function main() {
     case "accept_listing":
       if (toolArgs.length < 3) {
         throw new Error(
-          "Usage: accept_listing <listingId> <bidId> <evaluatorAddress> [--pk <clientPrivateKey>]",
+          "Usage: accept_listing <listingId> <bidId> <evaluatorAddress> --token <hex> [--pk <clientPrivateKey>]",
         );
       }
-      await acceptListingCmd(toolArgs[0], toolArgs[1], toolArgs[2], privateKey);
+      await acceptListingCmd(toolArgs[0], toolArgs[1], toolArgs[2], privateKey, ownerToken);
       return;
     case "cancel_listing":
-      if (toolArgs.length < 1) throw new Error("Usage: cancel_listing <listingId> [--pk <clientPrivateKey>]");
-      await cancelListingCmd(toolArgs[0], privateKey);
+      if (toolArgs.length < 1) {
+        throw new Error("Usage: cancel_listing <listingId> --token <hex> [--pk <clientPrivateKey>]");
+      }
+      await cancelListingCmd(toolArgs[0], privateKey, ownerToken);
+      return;
+    case "link_listing":
+      if (toolArgs.length < 2) {
+        throw new Error(
+          "Usage: link_listing <listingId> <escrowJobId> --token <hex> [--pk <clientPrivateKey>]",
+        );
+      }
+      await linkListingOnchainCmd(toolArgs[0], toolArgs[1], privateKey, ownerToken);
       return;
     default:
       usage();

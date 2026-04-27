@@ -3,21 +3,24 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { baseSepolia } from "wagmi/chains";
-import { useConnection } from "wagmi";
+import { useConnection, useSwitchChain } from "wagmi";
 import { isAddress } from "viem";
 import {
   acceptListingBid,
   cancelListing,
   fetchListingDetail,
+  getStoredListingOwnerToken,
   postListingBid,
   type MarketBid,
   type MarketListing,
 } from "@/lib/listings";
+import { ConnectButton } from "@/components/connect-button";
 
 const card = "cl-card-strong rounded-xl p-4";
 
 export function ListingDetailMarket({ id }: { id: number }) {
   const { address, status, chainId } = useConnection();
+  const { switchChain, isPending: isSwitching } = useSwitchChain();
   const [data, setData] = useState<{ listing: MarketListing; bids: MarketBid[] } | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
@@ -80,10 +83,18 @@ export function ListingDetailMarket({ id }: { id: number }) {
     }
   };
 
+  const ownerToken = getStoredListingOwnerToken(listing.id);
+
   const submitAccept = async (e: React.FormEvent, bidId: number) => {
     e.preventDefault();
     if (!address || !isAddress(evalAddr)) {
       setLocalMsg("Set a valid evaluator address.");
+      return;
+    }
+    if (!ownerToken) {
+      setLocalMsg(
+        "This browser does not have the listing key. Create the listing from New listing here, then accept on this same device/browser.",
+      );
       return;
     }
     setBusy(true);
@@ -94,6 +105,7 @@ export function ListingDetailMarket({ id }: { id: number }) {
         client: address,
         bidId,
         evaluator: evalAddr,
+        ownerToken,
       });
       setEvalAddr("");
       await load();
@@ -106,10 +118,16 @@ export function ListingDetailMarket({ id }: { id: number }) {
 
   const runCancel = async () => {
     if (!address) return;
+    if (!ownerToken) {
+      setLocalMsg(
+        "Missing listing owner token — only the browser session that created the listing can cancel (or use MCP with --token).",
+      );
+      return;
+    }
     setBusy(true);
     setLocalMsg(null);
     try {
-      await cancelListing(listing.id, address);
+      await cancelListing(listing.id, address, ownerToken);
       await load();
     } catch (x) {
       setLocalMsg(x instanceof Error ? x.message : "Cancel failed");
@@ -139,6 +157,36 @@ export function ListingDetailMarket({ id }: { id: number }) {
 
       {expired && listing.status === "open" ? (
         <p className="text-sm text-amber-200/90">This listing&apos;s bid window has expired.</p>
+      ) : null}
+
+      {listing.status === "open" && isClient ? (
+        <section className="rounded-xl border border-indigo-500/25 bg-indigo-950/35 p-4 sm:p-5">
+          <p className="text-xs font-semibold uppercase tracking-wide text-indigo-200">
+            Client · accept a bid (web only)
+          </p>
+          <ol className="mt-3 list-decimal space-y-2 pl-5 text-sm leading-relaxed text-slate-300">
+            <li>Stay on this page and connect the same wallet that created this listing (shown below as Client).</li>
+            <li>
+              Scroll to <strong className="text-white">Bids</strong>. Under the agent you want, paste your
+              evaluator&apos;s wallet (who will approve delivery)—not the agent&apos;s address.
+            </li>
+            <li>
+              Click <strong className="text-white">Accept this bid</strong>. Then use{" "}
+              <strong className="text-white">Create paid job</strong> when it appears to fund escrow in
+              the app.
+            </li>
+          </ol>
+          {!ownerToken ? (
+            <p className="mt-3 text-xs leading-relaxed text-amber-200/90">
+              This browser doesn&apos;t have the listing key (usually you didn&apos;t create the listing
+              here). Create the listing from{" "}
+              <Link href="/listings/new" className="text-teal-300 underline">
+                New listing
+              </Link>{" "}
+              in this browser, or you can&apos;t accept from the web.
+            </p>
+          ) : null}
+        </section>
       ) : null}
 
       <section className={card}>
@@ -177,7 +225,7 @@ export function ListingDetailMarket({ id }: { id: number }) {
       ) : null}
 
       {listing.status === "open" && isClient ? (
-        <div className="flex gap-3">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
           <button
             type="button"
             disabled={busy}
@@ -186,6 +234,16 @@ export function ListingDetailMarket({ id }: { id: number }) {
           >
             Cancel listing
           </button>
+          {!ownerToken ? (
+            <p className="text-xs text-amber-200/90">
+              Listing key missing—cancel/accept from the web only work if you created this listing in this
+              browser from{" "}
+              <Link href="/listings/new" className="text-teal-300 underline">
+                New listing
+              </Link>
+              .
+            </p>
+          ) : null}
         </div>
       ) : null}
 
@@ -205,6 +263,12 @@ export function ListingDetailMarket({ id }: { id: number }) {
                     onSubmit={(e) => void submitAccept(e, b.id)}
                     className="mt-2 max-w-md space-y-2"
                   >
+                    {!ownerToken ? (
+                      <p className="text-xs text-amber-200/90">
+                        Accept requires the listing owner token from the session that created this listing (or MCP with{" "}
+                        <code className="font-mono">--token</code>).
+                      </p>
+                    ) : null}
                     <input
                       className="w-full rounded-md border border-white/10 bg-slate-900/60 px-2 py-1.5 font-mono text-xs text-slate-100 placeholder:text-slate-600"
                       placeholder="Evaluator 0x…"
@@ -213,7 +277,7 @@ export function ListingDetailMarket({ id }: { id: number }) {
                     />
                     <button
                       type="submit"
-                      disabled={busy}
+                      disabled={busy || !ownerToken}
                       className="rounded-md bg-teal-500 px-3 py-1.5 text-xs font-semibold text-slate-950 hover:bg-teal-400 disabled:opacity-50"
                     >
                       Accept this bid
@@ -226,26 +290,53 @@ export function ListingDetailMarket({ id }: { id: number }) {
         )}
       </section>
 
-      {canBid ? (
+      {listing.status === "open" && !expired ? (
         <section className={card}>
           <h2 className="text-xs font-medium uppercase tracking-wider text-slate-500">Place a bid</h2>
-          <form onSubmit={(e) => void submitBid(e)} className="mt-3 max-w-md space-y-2">
-            <textarea
-              className="w-full rounded-md border border-white/10 bg-slate-900/60 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-600"
-              rows={4}
-              placeholder="Why you’re a fit, timeline, links…"
-              value={bidMsg}
-              onChange={(e) => setBidMsg(e.target.value)}
-              required
-            />
-            <button
-              type="submit"
-              disabled={busy}
-              className="rounded-lg bg-teal-500 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-teal-400 disabled:opacity-50"
-            >
-              Submit bid as {address?.slice(0, 6)}…
-            </button>
-          </form>
+          {canBid ? (
+            <form onSubmit={(e) => void submitBid(e)} className="mt-3 max-w-md space-y-2">
+              <textarea
+                className="w-full rounded-md border border-white/10 bg-slate-900/60 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-600"
+                rows={4}
+                placeholder="Why you’re a fit, timeline, links…"
+                value={bidMsg}
+                onChange={(e) => setBidMsg(e.target.value)}
+                required
+              />
+              <button
+                type="submit"
+                disabled={busy}
+                className="rounded-lg bg-teal-500 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-teal-400 disabled:opacity-50"
+              >
+                Submit bid as {address?.slice(0, 6)}…
+              </button>
+            </form>
+          ) : status !== "connected" ? (
+            <div className="mt-3 space-y-3">
+              <p className="text-sm text-slate-400">Connect a wallet on Base Sepolia to place a bid.</p>
+              <ConnectButton />
+            </div>
+          ) : chainId !== baseSepolia.id ? (
+            <div className="mt-3 space-y-3">
+              <p className="text-sm text-slate-400">
+                Switch to Base Sepolia (chain {baseSepolia.id}) to bid. This app is {chainId ?? "unknown"}.
+              </p>
+              <button
+                type="button"
+                disabled={isSwitching}
+                onClick={() => switchChain({ chainId: baseSepolia.id })}
+                className="rounded-lg bg-teal-500 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-teal-400 disabled:opacity-50"
+              >
+                {isSwitching ? "Switching…" : "Switch to Base Sepolia"}
+              </button>
+            </div>
+          ) : isClient ? (
+            <p className="mt-3 text-sm text-slate-500">
+              You are the client on this listing — use another wallet to bid as an agent.
+            </p>
+          ) : (
+            <p className="mt-3 text-sm text-slate-500">You can&apos;t bid on this listing right now.</p>
+          )}
         </section>
       ) : null}
 

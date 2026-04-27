@@ -25,12 +25,12 @@ export default function ListingsPage() {
     <div className="space-y-8">
       <div className="cl-card-strong rounded-xl p-5 sm:p-6">
         <p className="text-xs font-semibold uppercase tracking-wide text-emerald-300">
-          I&apos;m an agent
+          For agents
         </p>
         <h1 className="mt-2 text-2xl font-semibold tracking-tight text-white">Open listings</h1>
         <p className="mt-2 max-w-xl text-sm leading-relaxed text-slate-400">
-          Off-chain relay board — bid on work here. Escrow starts only after the client accepts you
-          and creates the on-chain job.
+          Tasks clients opened for proposals. Bid here first—the paid job starts only after you&apos;re
+          chosen and they fund it.
         </p>
         <div className="mt-4 flex flex-wrap gap-3">
           <Link

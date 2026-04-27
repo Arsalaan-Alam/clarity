@@ -58,7 +58,7 @@ export async function createListing(input: {
   contentHash: `0x${string}`;
   budgetHintUsdc?: string;
   listingExpiresAt: number;
-}): Promise<MarketListing> {
+}): Promise<{ listing: MarketListing; ownerToken: string }> {
   const res = await fetch(`${base()}/relay/listings`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -68,8 +68,37 @@ export async function createListing(input: {
     const t = await res.text();
     throw new Error(`create listing failed: ${res.status} ${t}`);
   }
-  const data = (await res.json()) as { listing: MarketListing };
-  return data.listing;
+  const data = (await res.json()) as { listing: MarketListing; ownerToken?: string };
+  if (!data.ownerToken) {
+    throw new Error("Relay must return ownerToken (upgrade relay to latest).");
+  }
+  return { listing: data.listing, ownerToken: data.ownerToken };
+}
+
+export const listingOwnerStorageKey = (listingId: number) =>
+  `clarity_listing_owner_${listingId}` as const;
+
+/** Save after creating a listing (web). Uses localStorage + sessionStorage so accept works in a new tab. */
+export function persistListingOwnerToken(listingId: number, ownerToken: string): void {
+  if (typeof window === "undefined") return;
+  const key = listingOwnerStorageKey(listingId);
+  try {
+    localStorage.setItem(key, ownerToken);
+    sessionStorage.setItem(key, ownerToken);
+  } catch {
+    /* private mode */
+  }
+}
+
+/** Owner secret for accept / cancel / link-onchain from this browser. */
+export function getStoredListingOwnerToken(listingId: number): string | null {
+  if (typeof window === "undefined") return null;
+  const key = listingOwnerStorageKey(listingId);
+  try {
+    return localStorage.getItem(key) ?? sessionStorage.getItem(key);
+  } catch {
+    return null;
+  }
 }
 
 export async function postListingBid(
@@ -94,6 +123,7 @@ export async function acceptListingBid(input: {
   client: string;
   bidId: number;
   evaluator: string;
+  ownerToken: string;
 }): Promise<MarketListing> {
   const res = await fetch(`${base()}/relay/listings/${input.listingId}/accept`, {
     method: "POST",
@@ -102,6 +132,7 @@ export async function acceptListingBid(input: {
       client: input.client,
       bidId: input.bidId,
       evaluator: input.evaluator,
+      ownerToken: input.ownerToken,
     }),
   });
   if (!res.ok) {
@@ -112,11 +143,15 @@ export async function acceptListingBid(input: {
   return data.listing;
 }
 
-export async function cancelListing(listingId: number, client: string): Promise<MarketListing> {
+export async function cancelListing(
+  listingId: number,
+  client: string,
+  ownerToken: string,
+): Promise<MarketListing> {
   const res = await fetch(`${base()}/relay/listings/${listingId}/cancel`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ client }),
+    body: JSON.stringify({ client, ownerToken }),
   });
   if (!res.ok) {
     const t = await res.text();
@@ -130,6 +165,7 @@ export async function linkListingToEscrow(input: {
   listingId: number;
   client: string;
   escrowJobId: number;
+  ownerToken: string;
 }): Promise<MarketListing> {
   const res = await fetch(`${base()}/relay/listings/${input.listingId}/onchain`, {
     method: "POST",
@@ -137,6 +173,7 @@ export async function linkListingToEscrow(input: {
     body: JSON.stringify({
       client: input.client,
       escrowJobId: input.escrowJobId,
+      ownerToken: input.ownerToken,
     }),
   });
   if (!res.ok) {

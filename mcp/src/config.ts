@@ -1,6 +1,7 @@
 export const BASE_SEPOLIA_CHAIN_ID = 84532;
 export const CLARITY_RPC_URL = process.env.CLARITY_RPC_URL || "https://sepolia.base.org";
-export const CLARITY_API_URL = process.env.CLARITY_API_URL || "http://localhost:8787";
+/** Default matches README relay (`PORT=8788`). Override if you run the relay elsewhere. */
+export const CLARITY_API_URL = process.env.CLARITY_API_URL || "http://localhost:8788";
 export const CLARITY_PRIVATE_KEY = process.env.CLARITY_PRIVATE_KEY || "";
 export const CLARITY_DELIVERABLE_SECRET = process.env.CLARITY_DELIVERABLE_SECRET || "clarity-dev-secret";
 
