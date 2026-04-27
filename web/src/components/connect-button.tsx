@@ -9,6 +9,11 @@ import {
   useSwitchChain,
 } from "wagmi";
 import type { Connector } from "wagmi";
+import {
+  AppKitAccountButton,
+  AppKitConnectButton,
+} from "@reown/appkit/react";
+import { isAppKitEnabled } from "@/lib/wagmi-config";
 
 function shortAddress(addr: string) {
   return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
@@ -18,7 +23,7 @@ function sortConnectors(list: readonly Connector[]) {
   return [...list].sort((a, b) => a.name.localeCompare(b.name));
 }
 
-export function ConnectButton() {
+function LegacyConnectMenu() {
   const { status, address, chainId, connector } = useConnection();
   const { disconnect } = useDisconnect();
   const { connectAsync, connectors, isPending } = useConnect();
@@ -84,7 +89,7 @@ export function ConnectButton() {
   if (sorted.length === 0) {
     return (
       <p className="text-xs text-zinc-500">
-        No browser wallet found. Install a wallet extension (e.g. MetaMask) and refresh.
+        No browser wallet found. Install a wallet extension and refresh.
       </p>
     );
   }
@@ -137,4 +142,45 @@ export function ConnectButton() {
       )}
     </div>
   );
+}
+
+/** Reown AppKit: WalletConnect QR + Coinbase + injected wallets (single modal). */
+function AppKitHeaderControls() {
+  const { status, chainId } = useConnection();
+  const { switchChainAsync, isPending: isSwitching } = useSwitchChain();
+
+  if (status === "connected" && chainId !== baseSepolia.id) {
+    return (
+      <button
+        type="button"
+        onClick={() => switchChainAsync({ chainId: baseSepolia.id })}
+        disabled={isSwitching}
+        className="rounded-md bg-zinc-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-zinc-800 disabled:opacity-50"
+      >
+        {isSwitching ? "Switching…" : "Base Sepolia"}
+      </button>
+    );
+  }
+
+  if (status === "connected") {
+    return (
+      <div className="flex items-center gap-2 [&_button]:rounded-md [&_button]:border [&_button]:border-zinc-200 [&_button]:px-2.5 [&_button]:py-1.5 [&_button]:text-xs">
+        <AppKitAccountButton />
+      </div>
+    );
+  }
+
+  return (
+    <div className="inline-flex">
+      <AppKitConnectButton />
+    </div>
+  );
+}
+
+export function ConnectButton() {
+  if (isAppKitEnabled()) {
+    return <AppKitHeaderControls />;
+  }
+
+  return <LegacyConnectMenu />;
 }

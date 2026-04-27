@@ -10,7 +10,7 @@ import {
 import { clarityEscrowAbi } from "./abi/escrow.js";
 import { usdcAbi } from "./abi/usdc.js";
 import { assertChain, formatUsdc, getAccount, getWalletClient, normalizeAddress, parseUsdc, publicClient, toBytes32 } from "./protocol.js";
-import { postRelayEvent } from "./relay.js";
+import { registerJobMetadata, postRelayEvent } from "./relay.js";
 import { decryptDeliverable, encryptDeliverable } from "./encryption.js";
 
 const COMMANDS = [
@@ -48,6 +48,40 @@ function extractPrivateKeyArg(args: string[]) {
   }
   const filteredArgs = [...args.slice(0, idx), ...args.slice(idx + 2)];
   return { privateKey: value, filteredArgs };
+}
+
+/** Strips `--title`, `--desc` / `--description`, `--tags` for create_job. */
+function parseCreateJobCliArgs(toolArgs: string[]) {
+  const positional: string[] = [];
+  let title: string | undefined;
+  let description: string | undefined;
+  let tags: string[] | undefined;
+  for (let i = 0; i < toolArgs.length; i++) {
+    const a = toolArgs[i];
+    if (a === "--title") {
+      const v = toolArgs[++i];
+      if (!v || v.startsWith("--")) throw new Error("create_job: --title needs a value.");
+      title = v;
+      continue;
+    }
+    if (a === "--desc" || a === "--description") {
+      const v = toolArgs[++i];
+      if (!v || v.startsWith("--")) throw new Error("create_job: --desc needs a value.");
+      description = v;
+      continue;
+    }
+    if (a === "--tags") {
+      const v = toolArgs[++i];
+      if (!v || v.startsWith("--")) throw new Error("create_job: --tags needs a value.");
+      tags = v
+        .split(",")
+        .map((t) => t.trim())
+        .filter(Boolean);
+      continue;
+    }
+    positional.push(a);
+  }
+  return { positional, title, description, tags };
 }
 
 function parseJobResult(raw: readonly unknown[]) {
@@ -128,8 +162,9 @@ async function createJob(
   providerArg: string,
   evaluatorArg: string,
   expiresInSecArg: string,
-  descriptionArg: string,
-  privateKey?: string,
+  descriptionArg: string | undefined,
+  privateKey: string | undefined,
+  rich: { title: string; description: string; tags?: string[] } | undefined,
 ) {
   const wallet = getWalletClient(privateKey);
   const account = getAccount(privateKey);
@@ -137,7 +172,19 @@ async function createJob(
   const provider = normalizeAddress(providerArg);
   const evaluator = normalizeAddress(evaluatorArg);
   const expiresAt = BigInt(Math.floor(Date.now() / 1000) + Number(expiresInSecArg));
-  const descriptionCid = toBytes32(descriptionArg);
+
+  let descriptionCid: `0x${string}`;
+  if (rich) {
+    const title = rich.title.trim();
+    const desc = rich.description.trim();
+    if (!title || !desc) {
+      throw new Error("Rich metadata requires non-empty title and description.");
+    }
+    const registered = await registerJobMetadata({ title, description: desc, tags: rich.tags });
+    descriptionCid = registered.contentHash;
+  } else {
+    descriptionCid = toBytes32(descriptionArg!);
+  }
   const beforeCount = await publicClient.readContract({
     address: escrowAddress,
     abi: clarityEscrowAbi,
@@ -174,10 +221,23 @@ async function createJob(
       provider,
       evaluator,
       descriptionCid,
+      ...(rich
+        ? {
+            title: rich.title.trim(),
+            description: rich.description.trim(),
+            ...(rich.tags?.length ? { tags: rich.tags } : {}),
+          }
+        : {}),
     },
   });
 
-  console.log(JSON.stringify({ ok: true, jobId: createdJobId.toString(), txHash: hash }, null, 2));
+  console.log(
+    JSON.stringify(
+      { ok: true, jobId: createdJobId.toString(), txHash: hash, descriptionCid },
+      null,
+      2,
+    ),
+  );
 }
 
 async function setBudget(jobIdArg: string, amountArg: string, privateKey?: string) {
@@ -463,10 +523,40 @@ async function main() {
     case "get_wallet_info":
       await getWalletInfo(privateKey);
       return;
-    case "create_job":
-      if (toolArgs.length < 4) throw new Error("Usage: create_job <provider> <evaluator> <expiresInSeconds> <descriptionCidOrShortText> [--pk <privateKey>]");
-      await createJob(toolArgs[0], toolArgs[1], toolArgs[2], toolArgs[3], privateKey);
+    case "create_job": {
+      const { positional, title, description, tags } = parseCreateJobCliArgs(toolArgs);
+      const hasRich = Boolean(title?.trim() && description?.trim());
+      if (hasRich) {
+        if (positional.length < 3) {
+          throw new Error(
+            "Usage (rich metadata): create_job <provider> <evaluator> <expiresInSeconds> --title <t> --desc <description> [--tags a,b] [--pk <key>]",
+          );
+        }
+        await createJob(
+          positional[0]!,
+          positional[1]!,
+          positional[2]!,
+          undefined,
+          privateKey,
+          { title: title!, description: description!, tags },
+        );
+      } else {
+        if (positional.length < 4) {
+          throw new Error(
+            "Usage: create_job <provider> <evaluator> <expiresInSeconds> <descriptionCidOrShortText> [--pk <privateKey>]  |  rich: add --title and --desc (3 positionals only)",
+          );
+        }
+        await createJob(
+          positional[0]!,
+          positional[1]!,
+          positional[2]!,
+          positional[3]!,
+          privateKey,
+          undefined,
+        );
+      }
       return;
+    }
     case "set_budget":
       if (toolArgs.length < 2) throw new Error("Usage: set_budget <jobId> <amountUsdc> [--pk <privateKey>]");
       await setBudget(toolArgs[0], toolArgs[1], privateKey);

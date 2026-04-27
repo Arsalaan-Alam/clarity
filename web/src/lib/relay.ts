@@ -18,6 +18,9 @@ export type RelayJob = {
   descriptionCid: string;
   status: RelayJobStatus;
   createdAt: number;
+  title?: string;
+  description?: string;
+  tags?: string[];
 };
 
 export type RelayEvent = {
@@ -49,6 +52,32 @@ export function chainStatusToRelayStatus(status: number): RelayJobStatus {
   }
 }
 
+export type JobMetadataRegisterInput = {
+  title: string;
+  description: string;
+  tags?: string[];
+};
+
+export async function registerJobMetadata(
+  input: JobMetadataRegisterInput,
+): Promise<{ contentHash: `0x${string}` }> {
+  const res = await fetch(`${base()}/relay/metadata`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      title: input.title,
+      description: input.description,
+      tags: input.tags,
+    }),
+  });
+  if (!res.ok) {
+    const t = await res.text();
+    throw new Error(`Relay metadata register failed: ${res.status} ${t}`);
+  }
+  const data = (await res.json()) as { contentHash: `0x${string}` };
+  return { contentHash: data.contentHash };
+}
+
 /** Same shape as MCP `postRelayEvent` — upserts job and appends timeline event. */
 export async function postRelayEvent(input: {
   jobId: number;
@@ -62,6 +91,9 @@ export async function postRelayEvent(input: {
     provider: string;
     evaluator: string;
     descriptionCid: string;
+    title?: string;
+    description?: string;
+    tags?: string[];
   };
 }): Promise<void> {
   const res = await fetch(`${base()}/relay/events`, {
@@ -78,6 +110,11 @@ export async function postRelayEvent(input: {
         descriptionCid: input.job.descriptionCid,
         status: input.status,
         createdAt: Date.now(),
+        ...(input.job.title != null ? { title: input.job.title } : {}),
+        ...(input.job.description != null
+          ? { description: input.job.description }
+          : {}),
+        ...(input.job.tags != null ? { tags: input.job.tags } : {}),
       },
       event: {
         jobId: input.jobId,

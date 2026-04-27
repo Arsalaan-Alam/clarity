@@ -38,7 +38,17 @@ cd ../web && npm install
 
 ## Frontend (`web/`)
 
-Next.js app (Base Sepolia, wagmi, minimal UI). **Connect** lists **browser extension** wallets via [EIP-6963](https://eips.ethereum.org/EIPS/eip-6963) (no WalletConnect). In `web/.env.local` set contract + relay URLs and optionally a dedicated `NEXT_PUBLIC_RPC_URL` (Alchemy, etc.).
+Next.js app (Base Sepolia, wagmi, minimal UI).
+
+**Souq** (reference product in `context/souq-description.md`) uses **[Privy](https://privy.io)** in the browser for wallet + email/social login. Clarity instead uses **[Reown AppKit](https://docs.reown.com/appkit)** (WalletConnect stack) so you get a full wallet modal—WalletConnect QR, Coinbase, injected extensions, etc.—without a Privy account.
+
+In `web/.env.local`:
+
+- `NEXT_PUBLIC_ESCROW_ADDRESS`, `NEXT_PUBLIC_USDC_ADDRESS`, `NEXT_PUBLIC_RELAY_URL` (and optional `NEXT_PUBLIC_RPC_URL`) as before.
+- **`NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID`** — create a project at [Reown / WalletConnect Cloud](https://cloud.reown.com) and paste the project id. When this is set, the header uses AppKit (`AppKitConnectButton` / `AppKitAccountButton`).
+- Optional: **`NEXT_PUBLIC_APP_URL`** — your deployed site origin (used in AppKit metadata; defaults to `http://localhost:3000`).
+
+If `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID` is **unset**, the app falls back to a simple **EIP-6963** “pick an extension” connect menu (multiple injected wallets, no WalletConnect).
 
 ```bash
 cd web && npm run dev

@@ -11,10 +11,10 @@ import {
 } from "wagmi";
 import { isAddress, parseUnits } from "viem";
 import { clarityEscrowAbi, usdcAbi } from "@/lib/abi";
-import { toBytes32 } from "@/lib/bytes32";
 import { getEscrowAddress, getUsdcAddress } from "@/lib/env";
 import {
   chainStatusToRelayStatus,
+  registerJobMetadata,
   postRelayEvent,
 } from "@/lib/relay";
 
@@ -32,7 +32,9 @@ export function CreateJobForm() {
   const [provider, setProvider] = useState("");
   const [evaluator, setEvaluator] = useState("");
   const [hours, setHours] = useState("24");
-  const [label, setLabel] = useState("job");
+  const [title, setTitle] = useState("");
+  const [longDescription, setLongDescription] = useState("");
+  const [tagsCsv, setTagsCsv] = useState("");
   const [budget, setBudget] = useState("5");
   const [step, setStep] = useState<Step>("form");
   const [jobId, setJobId] = useState<bigint | null>(null);
@@ -88,13 +90,36 @@ export function CreateJobForm() {
       setMessage("Expiry must be in the future.");
       return;
     }
-    const desc = toBytes32(label);
+    if (!title.trim() || !longDescription.trim()) {
+      setMessage("Add a title and description (stored via relay; bytes32 = keccak256 of canonical JSON).");
+      return;
+    }
+    let desc: `0x${string}`;
+    try {
+      const registered = await registerJobMetadata({
+        title: title.trim(),
+        description: longDescription.trim(),
+        tags: tagsCsv
+          .split(",")
+          .map((t) => t.trim())
+          .filter(Boolean),
+      });
+      desc = registered.contentHash;
+    } catch (e) {
+      setMessage(
+        e instanceof Error
+          ? e.message
+          : "Could not pin metadata — is the relay running and NEXT_PUBLIC_RELAY_URL set?",
+      );
+      return;
+    }
     const hash = await writeContractAsync({
       address: escrow,
       abi: clarityEscrowAbi,
       functionName: "createJob",
       args: [provider, evaluator, expiresAt, desc],
       gas: TX_GAS,
+      account: address,
     });
     await publicClient.waitForTransactionReceipt({ hash });
     const count = await publicClient.readContract({
@@ -102,6 +127,19 @@ export function CreateJobForm() {
       abi: clarityEscrowAbi,
       functionName: "jobCount",
     });
+    const createdRow = await publicClient.readContract({
+      address: escrow,
+      abi: clarityEscrowAbi,
+      functionName: "jobs",
+      args: [count],
+    });
+    const clientFromChain = String((createdRow as readonly unknown[])[0]);
+    if (clientFromChain.toLowerCase() !== address.toLowerCase()) {
+      setMessage(
+        `On-chain client is ${clientFromChain} but the app showed ${address} as connected. ` +
+          `Use the wallet that actually signed (often whichever owns window.ethereum on this site), or create a new job after fixing extensions. Budget/fund must be sent from ${clientFromChain}.`,
+      );
+    }
     setJobId(count);
     setStep("budget");
     try {
@@ -113,18 +151,32 @@ export function CreateJobForm() {
         job: {
           chainId: baseSepolia.id,
           escrow,
-          client: address,
+          client: clientFromChain,
           provider,
           evaluator,
           descriptionCid: desc,
+          title: title.trim(),
+          description: longDescription.trim(),
+          tags: tagsCsv
+            .split(",")
+            .map((t) => t.trim())
+            .filter(Boolean),
         },
       });
-      setMessage("Job created. Set budget, then fund.");
+      if (clientFromChain.toLowerCase() === address.toLowerCase()) {
+        setMessage("Job created. Set budget, then fund.");
+      }
     } catch (relayErr) {
-      setMessage(
+      const relayFail =
         `Job #${count} is on-chain, but the relay was not updated (${relayErr instanceof Error ? relayErr.message : "error"}). ` +
-          `Open /jobs only lists relay jobs — check NEXT_PUBLIC_RELAY_URL and that the relay is running.`,
-      );
+        `Open /jobs only lists relay jobs — check NEXT_PUBLIC_RELAY_URL and that the relay is running.`;
+      if (clientFromChain.toLowerCase() !== address.toLowerCase()) {
+        setMessage(
+          `On-chain client is ${clientFromChain} but the app showed ${address} as connected. Budget/fund must use ${clientFromChain}. ${relayFail}`,
+        );
+      } else {
+        setMessage(relayFail);
+      }
     }
   };
 
@@ -162,6 +214,7 @@ export function CreateJobForm() {
       functionName: "setBudget",
       args: [jobId, amount],
       gas: TX_GAS,
+      account: address,
     });
     if (publicClient) {
       await publicClient.waitForTransactionReceipt({ hash });
@@ -196,7 +249,7 @@ export function CreateJobForm() {
 
   const runFund = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (jobId == null) return;
+    if (jobId == null || !address) return;
     setMessage(null);
     const amount = parseUnits(budget, 6);
     if (onchainJob && Array.isArray(onchainJob) && (onchainJob[3] as bigint) === 0n) {
@@ -209,6 +262,7 @@ export function CreateJobForm() {
       functionName: "approve",
       args: [escrow, amount],
       gas: TX_GAS,
+      account: address,
     });
     if (publicClient) {
       await publicClient.waitForTransactionReceipt({ hash: h1 });
@@ -219,6 +273,7 @@ export function CreateJobForm() {
       functionName: "fund",
       args: [jobId, amount],
       gas: TX_GAS,
+      account: address,
     });
     if (publicClient) {
       await publicClient.waitForTransactionReceipt({ hash: h2 });
@@ -287,13 +342,42 @@ export function CreateJobForm() {
             />
           </div>
           <div>
-            <label className="text-xs text-zinc-500">Label</label>
+            <label className="text-xs text-zinc-500">Title</label>
             <input
               className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm"
-              value={label}
-              onChange={(e) => setLabel(e.target.value)}
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="Short headline"
+              required
             />
           </div>
+          <div>
+            <label className="text-xs text-zinc-500">Description</label>
+            <textarea
+              className="mt-1 min-h-[120px] w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm"
+              value={longDescription}
+              onChange={(e) => setLongDescription(e.target.value)}
+              placeholder="Scope, acceptance criteria, links…"
+              required
+            />
+          </div>
+          <div>
+            <label className="text-xs text-zinc-500">Tags (optional, comma-separated)</label>
+            <input
+              className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm"
+              value={tagsCsv}
+              onChange={(e) => setTagsCsv(e.target.value)}
+              placeholder="solidity, design"
+            />
+          </div>
+          <p className="text-xs text-zinc-500">
+            Metadata is canonicalized and hashed; that <span className="font-mono">bytes32</span> is
+            written on-chain and stored on the relay.
+          </p>
+          <p className="text-xs text-zinc-600">
+            <span className="text-zinc-500">You will create this job as</span>{" "}
+            <span className="font-mono break-all">{address}</span>
+          </p>
           <button
             type="submit"
             disabled={isWriting}
@@ -306,25 +390,34 @@ export function CreateJobForm() {
 
       {step === "budget" && jobId != null && (
         <div className="space-y-4">
-          <p className="text-sm text-zinc-600">
-            Job id: <span className="font-mono">{jobId.toString()}</span>
+          <div className="text-sm text-zinc-600 space-y-2">
+            <p>
+              Job id: <span className="font-mono">{jobId.toString()}</span>
+            </p>
+            {address ? (
+              <p>
+                <span className="text-zinc-500">Connected in this app: </span>
+                <span className="font-mono text-xs break-all">{address}</span>
+              </p>
+            ) : null}
             {onchainJob && Array.isArray(onchainJob) && (
-              <>
-                <br />
-                <span className="text-zinc-500">On-chain client: </span>
-                <span className="font-mono text-xs">
+              <p>
+                <span className="text-zinc-500">On-chain client (must match to budget/fund): </span>
+                <span className="font-mono text-xs break-all">
                   {String((onchainJob as readonly unknown[])[0])}
                 </span>
                 {address &&
                   String((onchainJob as readonly unknown[])[0]).toLowerCase() !==
                     address.toLowerCase() && (
-                    <span className="block text-amber-800 text-xs mt-1">
-                      Switch to this wallet to set budget and fund.
+                    <span className="block text-amber-800 text-xs mt-2 leading-relaxed">
+                      Switch Rabby (or your wallet) to this exact address, or create a new job while
+                      connected as the client you intend. This job is already owned on-chain by the
+                      address above.
                     </span>
                   )}
-              </>
+              </p>
             )}
-          </p>
+          </div>
           <form onSubmit={runBudget} className="space-y-3">
             <div>
               <label className="text-xs text-zinc-500">Budget (mUSDC)</label>

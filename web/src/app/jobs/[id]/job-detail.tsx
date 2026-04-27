@@ -92,7 +92,16 @@ export function JobDetail({ id: idStr }: { id: string }) {
       >
         ← Jobs
       </Link>
-      <h1 className="text-xl font-semibold">Job #{jobId}</h1>
+      <header className="space-y-1">
+        <h1 className="text-xl font-semibold text-zinc-900">
+          {relay?.job.title ?? `Job #${jobId}`}
+        </h1>
+        {relay?.job.title ? (
+          <p className="text-sm text-zinc-500">
+            <span className="font-mono">#{jobId}</span>
+          </p>
+        ) : null}
+      </header>
 
       <section className="rounded-lg border border-zinc-200 bg-white p-4">
         <h2 className="text-xs font-medium uppercase tracking-wider text-zinc-400">
@@ -137,14 +146,34 @@ export function JobDetail({ id: idStr }: { id: string }) {
       </section>
 
       {!relayLoading && relay && (
-        <section className="rounded-lg border border-zinc-200 bg-white p-4">
+        <section className="rounded-lg border border-zinc-200 bg-white p-4 space-y-3">
           <h2 className="text-xs font-medium uppercase tracking-wider text-zinc-400">
             Relay
           </h2>
-          <p className="mt-1 text-sm text-zinc-600">
+          <p className="text-sm text-zinc-600">
             Off-chain status:{" "}
             <span className="text-zinc-800">{relay.job.status}</span>
           </p>
+          {relay.job.description ? (
+            <div>
+              <h3 className="text-xs font-medium text-zinc-500">Description</h3>
+              <p className="mt-1 whitespace-pre-wrap text-sm text-zinc-800">
+                {relay.job.description}
+              </p>
+            </div>
+          ) : null}
+          {relay.job.tags && relay.job.tags.length > 0 ? (
+            <div className="flex flex-wrap gap-1.5">
+              {relay.job.tags.map((t) => (
+                <span
+                  key={t}
+                  className="rounded-md bg-zinc-100 px-2 py-0.5 text-xs text-zinc-700"
+                >
+                  {t}
+                </span>
+              ))}
+            </div>
+          ) : null}
         </section>
       )}
 

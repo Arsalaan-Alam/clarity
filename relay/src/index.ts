@@ -1,6 +1,11 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { serve } from "@hono/node-server";
+import {
+  canonicalJobMetadataJson,
+  metadataContentHash,
+  type JobMetadataInput,
+} from "./metadata.js";
 
 type JobEvent = {
   id: number;
@@ -20,6 +25,9 @@ type RelayJob = {
   descriptionCid: string;
   status: "open" | "funded" | "submitted" | "completed" | "rejected" | "expired";
   createdAt: number;
+  title?: string;
+  description?: string;
+  tags?: string[];
 };
 
 type DeliverableRecord = {
@@ -45,6 +53,9 @@ app.use(
 const jobs: RelayJob[] = [];
 const events: JobEvent[] = [];
 const deliverables = new Map<number, DeliverableRecord>();
+
+/** Key: lowercase 0x-prefixed content hash — same bytes32 as on-chain descriptionCid. */
+const metadataByHash = new Map<string, { canonical: string }>();
 
 app.get("/health", (c) => c.json({ ok: true, service: "clarity-relay" }));
 
@@ -74,6 +85,40 @@ app.get("/relay/events", (c) => {
   return c.json({ events: timeline });
 });
 
+app.post("/relay/metadata", async (c) => {
+  const body = await c.req.json<JobMetadataInput>();
+  if (!body.title?.trim() || !body.description?.trim()) {
+    return c.json({ error: "title_and_description_required" }, 400);
+  }
+  const canonical = canonicalJobMetadataJson(body);
+  const contentHash = metadataContentHash(canonical);
+  const key = contentHash.toLowerCase();
+  metadataByHash.set(key, { canonical });
+
+  return c.json({ contentHash });
+});
+
+app.get("/relay/metadata", (c) => {
+  const hash = c.req.query("hash");
+  if (!hash || !/^0x[0-9a-fA-F]{64}$/.test(hash)) {
+    return c.json({ error: "invalid_hash_query" }, 400);
+  }
+  const rec = metadataByHash.get(hash.toLowerCase());
+  if (!rec) return c.json({ error: "metadata_not_found" }, 404);
+  let parsed: { v: number; title: string; description: string; tags: string[] };
+  try {
+    parsed = JSON.parse(rec.canonical) as typeof parsed;
+  } catch {
+    return c.json({ error: "corrupt_metadata" }, 500);
+  }
+  return c.json({
+    contentHash: hash,
+    title: parsed.title,
+    description: parsed.description,
+    tags: parsed.tags,
+  });
+});
+
 app.post("/relay/events", async (c) => {
   const body = await c.req.json<{
     job: RelayJob;
@@ -82,9 +127,14 @@ app.post("/relay/events", async (c) => {
 
   const existing = jobs.find((j) => j.id === body.job.id);
   if (!existing) {
-    jobs.push(body.job);
+    jobs.push({
+      ...body.job,
+      createdAt: body.job.createdAt ?? Date.now(),
+    });
   } else {
+    const keepCreated = existing.createdAt;
     Object.assign(existing, body.job);
+    existing.createdAt = keepCreated;
   }
 
   const event: JobEvent = {
