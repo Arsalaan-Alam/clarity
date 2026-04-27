@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { serve } from "@hono/node-server";
+import { isAddress } from "viem";
 import {
   canonicalJobMetadataJson,
   metadataContentHash,
@@ -39,6 +40,35 @@ type DeliverableRecord = {
   updatedAt: number;
 };
 
+type ListingStatus = "open" | "assigned" | "cancelled" | "onchain";
+
+type MarketListing = {
+  id: number;
+  chainId: number;
+  client: string;
+  title: string;
+  description: string;
+  tags: string[];
+  contentHash: string;
+  budgetHintUsdc?: string;
+  listingExpiresAt: number;
+  status: ListingStatus;
+  createdAt: number;
+  acceptedBidId?: number;
+  provider?: string;
+  evaluator?: string;
+  escrowJobId?: number;
+};
+
+type MarketBid = {
+  id: number;
+  listingId: number;
+  agentAddress: string;
+  message: string;
+  createdAt: number;
+  status: "pending" | "accepted" | "rejected";
+};
+
 const app = new Hono();
 
 app.use(
@@ -53,9 +83,14 @@ app.use(
 const jobs: RelayJob[] = [];
 const events: JobEvent[] = [];
 const deliverables = new Map<number, DeliverableRecord>();
+const listings: MarketListing[] = [];
+const marketBids: MarketBid[] = [];
 
 /** Key: lowercase 0x-prefixed content hash — same bytes32 as on-chain descriptionCid. */
 const metadataByHash = new Map<string, { canonical: string }>();
+
+let nextListingId = 1;
+let nextBidId = 1;
 
 app.get("/health", (c) => c.json({ ok: true, service: "clarity-relay" }));
 
@@ -117,6 +152,197 @@ app.get("/relay/metadata", (c) => {
     description: parsed.description,
     tags: parsed.tags,
   });
+});
+
+app.get("/relay/listings", (c) => {
+  const status = c.req.query("status") ?? "open";
+  const nowSec = Math.floor(Date.now() / 1000);
+  let filtered =
+    status === "all" ? listings : listings.filter((l) => l.status === status);
+  if (status === "open") {
+    filtered = filtered.filter(
+      (l) => l.status === "open" && l.listingExpiresAt > nowSec,
+    );
+  }
+  const sorted = [...filtered].sort((a, b) => b.createdAt - a.createdAt);
+  return c.json({ listings: sorted });
+});
+
+app.get("/relay/listings/:id", (c) => {
+  const id = Number(c.req.param("id"));
+  const listing = listings.find((l) => l.id === id);
+  if (!listing) return c.json({ error: "listing_not_found" }, 404);
+  const bids = marketBids
+    .filter((b) => b.listingId === id)
+    .sort((a, b) => b.createdAt - a.createdAt);
+  return c.json({ listing, bids });
+});
+
+app.post("/relay/listings", async (c) => {
+  const body = await c.req.json<{
+    chainId: number;
+    client: string;
+    title: string;
+    description: string;
+    tags?: string[];
+    contentHash: string;
+    budgetHintUsdc?: string;
+    listingExpiresAt: number;
+  }>();
+
+  if (!isAddress(body.client)) {
+    return c.json({ error: "invalid_client" }, 400);
+  }
+  if (!body.title?.trim() || !body.description?.trim()) {
+    return c.json({ error: "title_and_description_required" }, 400);
+  }
+  if (!body.contentHash || !/^0x[0-9a-fA-F]{64}$/.test(body.contentHash)) {
+    return c.json({ error: "invalid_content_hash" }, 400);
+  }
+  const nowSec = Math.floor(Date.now() / 1000);
+  if (!Number.isFinite(body.listingExpiresAt) || body.listingExpiresAt <= nowSec) {
+    return c.json({ error: "invalid_listing_expires" }, 400);
+  }
+  const tags = [...(body.tags ?? [])].map((t) => t.trim()).filter(Boolean);
+  const canonical = canonicalJobMetadataJson({
+    title: body.title.trim(),
+    description: body.description.trim(),
+    tags,
+  });
+  const computed = metadataContentHash(canonical);
+  if (computed.toLowerCase() !== body.contentHash.toLowerCase()) {
+    return c.json({ error: "content_hash_mismatch" }, 400);
+  }
+  metadataByHash.set(computed.toLowerCase(), { canonical });
+
+  const listing: MarketListing = {
+    id: nextListingId++,
+    chainId: Number(body.chainId) || 84532,
+    client: body.client,
+    title: body.title.trim(),
+    description: body.description.trim(),
+    tags,
+    contentHash: computed,
+    budgetHintUsdc: body.budgetHintUsdc?.trim() || undefined,
+    listingExpiresAt: body.listingExpiresAt,
+    status: "open",
+    createdAt: Date.now(),
+  };
+  listings.push(listing);
+  return c.json({ listing });
+});
+
+app.post("/relay/listings/:id/bids", async (c) => {
+  const listingId = Number(c.req.param("id"));
+  const listing = listings.find((l) => l.id === listingId);
+  if (!listing) return c.json({ error: "listing_not_found" }, 404);
+  if (listing.status !== "open") {
+    return c.json({ error: "listing_not_open" }, 400);
+  }
+  const nowSec = Math.floor(Date.now() / 1000);
+  if (nowSec > listing.listingExpiresAt) {
+    return c.json({ error: "listing_expired" }, 400);
+  }
+
+  const body = await c.req.json<{ agentAddress: string; message: string }>();
+  if (!isAddress(body.agentAddress)) {
+    return c.json({ error: "invalid_agent" }, 400);
+  }
+  const msg = (body.message ?? "").trim();
+  if (!msg || msg.length > 2000) {
+    return c.json({ error: "invalid_message" }, 400);
+  }
+  if (body.agentAddress.toLowerCase() === listing.client.toLowerCase()) {
+    return c.json({ error: "client_cannot_bid" }, 400);
+  }
+
+  const bid: MarketBid = {
+    id: nextBidId++,
+    listingId,
+    agentAddress: body.agentAddress,
+    message: msg,
+    createdAt: Date.now(),
+    status: "pending",
+  };
+  marketBids.push(bid);
+  return c.json({ bid });
+});
+
+app.post("/relay/listings/:id/accept", async (c) => {
+  const listingId = Number(c.req.param("id"));
+  const listing = listings.find((l) => l.id === listingId);
+  if (!listing) return c.json({ error: "listing_not_found" }, 404);
+  if (listing.status !== "open") {
+    return c.json({ error: "listing_not_open" }, 400);
+  }
+
+  const body = await c.req.json<{
+    client: string;
+    bidId: number;
+    evaluator: string;
+  }>();
+  if (!body.client || listing.client.toLowerCase() !== body.client.toLowerCase()) {
+    return c.json({ error: "unauthorized_client" }, 403);
+  }
+  if (!isAddress(body.evaluator)) {
+    return c.json({ error: "invalid_evaluator" }, 400);
+  }
+  const bid = marketBids.find(
+    (b) => b.id === body.bidId && b.listingId === listingId && b.status === "pending",
+  );
+  if (!bid) return c.json({ error: "bid_not_found" }, 404);
+  if (bid.agentAddress.toLowerCase() === body.evaluator.toLowerCase()) {
+    return c.json({ error: "evaluator_cannot_match_provider" }, 400);
+  }
+
+  listing.status = "assigned";
+  listing.acceptedBidId = bid.id;
+  listing.provider = bid.agentAddress;
+  listing.evaluator = body.evaluator;
+  bid.status = "accepted";
+  for (const b of marketBids) {
+    if (b.listingId === listingId && b.id !== bid.id && b.status === "pending") {
+      b.status = "rejected";
+    }
+  }
+  return c.json({ listing });
+});
+
+app.post("/relay/listings/:id/cancel", async (c) => {
+  const listingId = Number(c.req.param("id"));
+  const listing = listings.find((l) => l.id === listingId);
+  if (!listing) return c.json({ error: "listing_not_found" }, 404);
+  const body = await c.req.json<{ client: string }>();
+  if (!body.client || listing.client.toLowerCase() !== body.client.toLowerCase()) {
+    return c.json({ error: "unauthorized_client" }, 403);
+  }
+  if (listing.status === "onchain") {
+    return c.json({ error: "already_onchain" }, 400);
+  }
+  listing.status = "cancelled";
+  for (const b of marketBids) {
+    if (b.listingId === listingId && b.status === "pending") b.status = "rejected";
+  }
+  return c.json({ listing });
+});
+
+app.post("/relay/listings/:id/onchain", async (c) => {
+  const listingId = Number(c.req.param("id"));
+  const listing = listings.find((l) => l.id === listingId);
+  if (!listing) return c.json({ error: "listing_not_found" }, 404);
+  const body = await c.req.json<{ client: string; escrowJobId: number }>();
+  if (!body.client || listing.client.toLowerCase() !== body.client.toLowerCase()) {
+    return c.json({ error: "unauthorized_client" }, 403);
+  }
+  if (listing.status !== "assigned") {
+    return c.json({ error: "listing_not_assigned" }, 400);
+  }
+  if (!Number.isFinite(body.escrowJobId) || body.escrowJobId <= 0) {
+    return c.json({ error: "invalid_escrow_job_id" }, 400);
+  }
+  listing.status = "onchain";
+  listing.escrowJobId = body.escrowJobId;
+  return c.json({ listing });
 });
 
 app.post("/relay/events", async (c) => {

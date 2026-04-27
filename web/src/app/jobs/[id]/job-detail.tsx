@@ -9,9 +9,11 @@ import { getEscrowAddress } from "@/lib/env";
 import { fetchRelayJobDetail, type RelayEvent, type RelayJob } from "@/lib/relay";
 import { onChainStatusLabel } from "@/lib/status";
 
+const card = "cl-card-strong rounded-xl p-4";
+
 function ExplorerTx({ hash }: { hash: string }) {
   if (hash === "0xsync") {
-    return <span className="text-zinc-400">—</span>;
+    return <span className="text-slate-500">—</span>;
   }
   const href = `https://sepolia.basescan.org/tx/${hash}`;
   return (
@@ -19,7 +21,7 @@ function ExplorerTx({ hash }: { hash: string }) {
       href={href}
       target="_blank"
       rel="noreferrer"
-      className="font-mono text-xs text-blue-600 hover:underline"
+      className="font-mono text-xs text-teal-400 hover:text-teal-300 hover:underline"
     >
       {hash.slice(0, 10)}…
     </a>
@@ -67,16 +69,16 @@ export function JobDetail({ id: idStr }: { id: string }) {
 
   if (!escrow) {
     return (
-      <p className="text-sm text-amber-800">
+      <p className="text-sm text-amber-200/90">
         Set{" "}
-        <code className="font-mono">NEXT_PUBLIC_ESCROW_ADDRESS</code> in{" "}
-        <code className="font-mono">web/.env.local</code>.
+        <code className="font-mono text-teal-200/80">NEXT_PUBLIC_ESCROW_ADDRESS</code> in{" "}
+        <code className="font-mono text-teal-200/80">web/.env.local</code>.
       </p>
     );
   }
 
   if (err) {
-    return <p className="text-sm text-red-600">{err}</p>;
+    return <p className="text-sm text-red-400">{err}</p>;
   }
 
   const statusIdx = onchain && Array.isArray(onchain) ? Number(onchain[7]) : -1;
@@ -88,56 +90,56 @@ export function JobDetail({ id: idStr }: { id: string }) {
     <div className="space-y-8">
       <Link
         href="/jobs"
-        className="text-xs text-zinc-500 hover:text-zinc-800"
+        className="text-xs text-slate-500 hover:text-teal-300"
       >
         ← Jobs
       </Link>
       <header className="space-y-1">
-        <h1 className="text-xl font-semibold text-zinc-900">
+        <h1 className="text-xl font-semibold text-white">
           {relay?.job.title ?? `Job #${jobId}`}
         </h1>
         {relay?.job.title ? (
-          <p className="text-sm text-zinc-500">
+          <p className="text-sm text-slate-400">
             <span className="font-mono">#{jobId}</span>
           </p>
         ) : null}
       </header>
 
-      <section className="rounded-lg border border-zinc-200 bg-white p-4">
-        <h2 className="text-xs font-medium uppercase tracking-wider text-zinc-400">
+      <section className={card}>
+        <h2 className="text-xs font-medium uppercase tracking-wider text-slate-500">
           On-chain
         </h2>
         {readErr ? (
-          <p className="mt-2 text-sm text-amber-700">{readErr.message}</p>
+          <p className="mt-2 text-sm text-amber-200/90">{readErr.message}</p>
         ) : onchain == null ? (
-          <p className="mt-2 text-sm text-zinc-500">Loading or no job…</p>
+          <p className="mt-2 text-sm text-slate-500">Loading or no job…</p>
         ) : (
           <dl className="mt-3 grid gap-2 text-sm">
             <div className="flex justify-between gap-4">
-              <dt className="text-zinc-500">Status</dt>
-              <dd className="font-mono text-zinc-800">{statusLabel}</dd>
+              <dt className="text-slate-500">Status</dt>
+              <dd className="font-mono text-slate-200">{statusLabel}</dd>
             </div>
             <div className="flex justify-between gap-4">
-              <dt className="text-zinc-500">Budget</dt>
-              <dd>
-                {formatUnits(budget, 6)} <span className="text-zinc-500">mUSDC</span>
+              <dt className="text-slate-500">Budget</dt>
+              <dd className="text-slate-200">
+                {formatUnits(budget, 6)} <span className="text-slate-500">mUSDC</span>
               </dd>
             </div>
             <div className="flex justify-between gap-4">
-              <dt className="text-zinc-500">Client</dt>
-              <dd className="font-mono text-xs break-all">
+              <dt className="text-slate-500">Client</dt>
+              <dd className="break-all font-mono text-xs text-slate-300">
                 {String((onchain as readonly unknown[])[0])}
               </dd>
             </div>
             <div className="flex justify-between gap-4">
-              <dt className="text-zinc-500">Provider</dt>
-              <dd className="font-mono text-xs break-all">
+              <dt className="text-slate-500">Provider</dt>
+              <dd className="break-all font-mono text-xs text-slate-300">
                 {String((onchain as readonly unknown[])[1])}
               </dd>
             </div>
             <div className="flex justify-between gap-4">
-              <dt className="text-zinc-500">Evaluator</dt>
-              <dd className="font-mono text-xs break-all">
+              <dt className="text-slate-500">Evaluator</dt>
+              <dd className="break-all font-mono text-xs text-slate-300">
                 {String((onchain as readonly unknown[])[2])}
               </dd>
             </div>
@@ -146,18 +148,18 @@ export function JobDetail({ id: idStr }: { id: string }) {
       </section>
 
       {!relayLoading && relay && (
-        <section className="rounded-lg border border-zinc-200 bg-white p-4 space-y-3">
-          <h2 className="text-xs font-medium uppercase tracking-wider text-zinc-400">
+        <section className={`${card} space-y-3`}>
+          <h2 className="text-xs font-medium uppercase tracking-wider text-slate-500">
             Relay
           </h2>
-          <p className="text-sm text-zinc-600">
+          <p className="text-sm text-slate-400">
             Off-chain status:{" "}
-            <span className="text-zinc-800">{relay.job.status}</span>
+            <span className="text-slate-200">{relay.job.status}</span>
           </p>
           {relay.job.description ? (
             <div>
-              <h3 className="text-xs font-medium text-zinc-500">Description</h3>
-              <p className="mt-1 whitespace-pre-wrap text-sm text-zinc-800">
+              <h3 className="text-xs font-medium text-slate-500">Description</h3>
+              <p className="mt-1 whitespace-pre-wrap text-sm text-slate-200">
                 {relay.job.description}
               </p>
             </div>
@@ -167,7 +169,7 @@ export function JobDetail({ id: idStr }: { id: string }) {
               {relay.job.tags.map((t) => (
                 <span
                   key={t}
-                  className="rounded-md bg-zinc-100 px-2 py-0.5 text-xs text-zinc-700"
+                  className="rounded-md bg-white/10 px-2 py-0.5 text-xs text-slate-300"
                 >
                   {t}
                 </span>
@@ -178,22 +180,22 @@ export function JobDetail({ id: idStr }: { id: string }) {
       )}
 
       {relayLoading && (
-        <p className="text-sm text-zinc-500">Loading relay…</p>
+        <p className="text-sm text-slate-500">Loading relay…</p>
       )}
 
       {!relayLoading && relay && relay.timeline.length > 0 && (
         <section>
-          <h2 className="text-xs font-medium uppercase tracking-wider text-zinc-400">
+          <h2 className="text-xs font-medium uppercase tracking-wider text-slate-500">
             Timeline
           </h2>
-          <ol className="mt-3 space-y-2 border-l border-zinc-200 pl-4">
+          <ol className="mt-3 space-y-2 border-l border-white/15 pl-4">
             {relay.timeline.map((e) => (
               <li key={e.id} className="text-sm">
-                <span className="text-zinc-500 text-xs">
+                <span className="text-xs text-slate-500">
                   {new Date(e.at).toLocaleString()}
                 </span>
                 <br />
-                <span className="text-zinc-800">{e.type}</span>{" "}
+                <span className="text-slate-200">{e.type}</span>{" "}
                 {e.payload?.txHash && <ExplorerTx hash={e.payload.txHash} />}
               </li>
             ))}
@@ -202,7 +204,7 @@ export function JobDetail({ id: idStr }: { id: string }) {
       )}
 
       {!relayLoading && !relay && !err && (
-        <p className="text-sm text-zinc-500">
+        <p className="text-sm text-slate-500">
           No relay entry for this id (chain data above if the job exists).
         </p>
       )}

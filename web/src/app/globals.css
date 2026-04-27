@@ -1,10 +1,26 @@
 @import "tailwindcss";
 
+/* Clarity — Souq-adjacent: dark editorial + teal accent */
 :root {
-  --background: #fafafa;
-  --foreground: #18181b;
-  --border: #e4e4e7;
-  --accent: #2563eb;
+  --cl-bg: #06080f;
+  --cl-bg-mid: #0a1020;
+  --cl-surface: #0f172a;
+  --cl-surface-hover: #162038;
+  --cl-border: rgba(148, 163, 184, 0.14);
+  --cl-border-strong: rgba(148, 163, 184, 0.28);
+  --cl-text: #e2e8f0;
+  --cl-text-muted: #94a3b8;
+  --cl-accent: #14b8a6;
+  --cl-accent-bright: #2dd4bf;
+  --cl-accent-dim: rgba(20, 184, 166, 0.15);
+  --cl-human: #a5b4fc;
+  --cl-human-bg: rgba(165, 180, 252, 0.1);
+  --cl-agent: #34d399;
+  --cl-agent-bg: rgba(52, 211, 153, 0.1);
+  --background: var(--cl-bg);
+  --foreground: var(--cl-text);
+  --border: var(--cl-border);
+  --accent: var(--cl-accent);
 }
 
 @theme inline {
@@ -15,11 +31,31 @@
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
+  background: radial-gradient(ellipse 120% 80% at 50% -20%, var(--cl-bg-mid), var(--cl-bg));
+  background-color: var(--cl-bg);
+  color: var(--cl-text);
   font-family: var(--font-sans), system-ui, sans-serif;
+  min-height: 100dvh;
 }
 
 a {
   text-decoration: none;
+}
+
+/* Readable prose on dark */
+.cl-prose-muted {
+  color: var(--cl-text-muted);
+}
+
+.cl-card {
+  background: rgba(15, 23, 42, 0.65);
+  border: 1px solid var(--cl-border);
+  border-radius: 0.75rem;
+  backdrop-filter: blur(8px);
+}
+
+.cl-card-strong {
+  background: rgba(15, 23, 42, 0.85);
+  border: 1px solid var(--cl-border-strong);
+  border-radius: 0.75rem;
 }

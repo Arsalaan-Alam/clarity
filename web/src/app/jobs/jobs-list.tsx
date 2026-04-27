@@ -65,43 +65,43 @@ export function JobsList() {
 
   if (!escrow) {
     return (
-      <p className="text-sm text-amber-800">
-        Set <code className="font-mono text-xs">NEXT_PUBLIC_ESCROW_ADDRESS</code> in{" "}
-        <code className="font-mono text-xs">web/.env.local</code>.
+      <p className="text-sm text-amber-200/90">
+        Set <code className="font-mono text-xs text-teal-200/80">NEXT_PUBLIC_ESCROW_ADDRESS</code> in{" "}
+        <code className="font-mono text-xs text-teal-200/80">web/.env.local</code>.
       </p>
     );
   }
 
   if (error) {
     return (
-      <p className="text-sm text-red-600">
+      <p className="text-sm text-red-400">
         {error instanceof Error ? error.message : "Failed to load jobs"} — check{" "}
-        <code className="font-mono text-xs">NEXT_PUBLIC_RPC_URL</code> if reads time out.
+        <code className="font-mono text-xs text-slate-300">NEXT_PUBLIC_RPC_URL</code> if reads time out.
       </p>
     );
   }
 
   if (isPending || jobs === undefined) {
-    return <p className="text-sm text-zinc-500">Loading…</p>;
+    return <p className="text-sm text-slate-500">Loading…</p>;
   }
 
   if (jobs.length === 0) {
-    return <p className="text-sm text-zinc-500">No jobs on this escrow yet.</p>;
+    return <p className="text-sm text-slate-500">No jobs on this escrow yet.</p>;
   }
 
   return (
-    <ul className="divide-y divide-zinc-200 rounded-lg border border-zinc-200 bg-white">
+    <ul className="divide-y divide-white/10 overflow-hidden rounded-xl border border-white/10 bg-slate-900/40">
       {jobs.map((j) => (
         <li key={j.id}>
           <Link
             href={`/jobs/${j.id}`}
-            className="flex items-center justify-between gap-3 px-4 py-3 hover:bg-zinc-50/80 transition-colors"
+            className="flex items-center justify-between gap-3 px-4 py-3 transition-colors hover:bg-white/5"
           >
             <div className="flex min-w-0 flex-col gap-0.5">
-              <span className="font-mono text-sm text-zinc-900">#{j.id}</span>
-              <span className="truncate font-mono text-xs text-zinc-500">{j.clientShort}</span>
+              <span className="font-mono text-sm text-slate-100">#{j.id}</span>
+              <span className="truncate font-mono text-xs text-slate-500">{j.clientShort}</span>
             </div>
-            <span className="shrink-0 rounded-md bg-zinc-100 px-2 py-0.5 text-xs text-zinc-600">
+            <span className="shrink-0 rounded-md bg-white/10 px-2 py-0.5 text-xs text-slate-300">
               {j.status}
             </span>
           </Link>

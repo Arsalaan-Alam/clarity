@@ -78,3 +78,85 @@ export async function postRelayEvent(input: RelayEventInput): Promise<void> {
     throw new Error(`Relay event post failed: ${res.status} ${body}`);
   }
 }
+
+export async function relayCreateListing(input: {
+  chainId: number;
+  client: string;
+  title: string;
+  description: string;
+  tags?: string[];
+  contentHash: `0x${string}`;
+  budgetHintUsdc?: string;
+  listingExpiresAt: number;
+}): Promise<unknown> {
+  const res = await fetch(`${CLARITY_API_URL}/relay/listings`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Relay listing create failed: ${res.status} ${body}`);
+  }
+  return res.json();
+}
+
+export async function relayListListings(status?: string): Promise<unknown> {
+  const u = new URL("/relay/listings", CLARITY_API_URL);
+  if (status) u.searchParams.set("status", status);
+  const res = await fetch(u.toString());
+  if (!res.ok) throw new Error(`Relay listings fetch failed: ${res.status}`);
+  return res.json();
+}
+
+export async function relayPostBid(
+  listingId: number,
+  agentAddress: string,
+  message: string,
+): Promise<unknown> {
+  const res = await fetch(`${CLARITY_API_URL}/relay/listings/${listingId}/bids`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ agentAddress, message }),
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Relay bid failed: ${res.status} ${body}`);
+  }
+  return res.json();
+}
+
+export async function relayAcceptBid(input: {
+  listingId: number;
+  client: string;
+  bidId: number;
+  evaluator: string;
+}): Promise<unknown> {
+  const res = await fetch(`${CLARITY_API_URL}/relay/listings/${input.listingId}/accept`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      client: input.client,
+      bidId: input.bidId,
+      evaluator: input.evaluator,
+    }),
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Relay accept failed: ${res.status} ${body}`);
+  }
+  return res.json();
+}
+
+export async function relayCancelListing(listingId: number, client: string): Promise<unknown> {
+  const res = await fetch(`${CLARITY_API_URL}/relay/listings/${listingId}/cancel`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ client }),
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Relay cancel failed: ${res.status} ${body}`);
+  }
+  return res.json();
+}

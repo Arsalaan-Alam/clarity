@@ -3,7 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import { headers } from "next/headers";
 import "./globals.css";
 import { AppProviders } from "@/providers/app-providers";
-import { Header } from "@/components/Header";
+import { SiteNav } from "@/components/site-nav";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -29,11 +29,11 @@ export default async function RootLayout({
   return (
     <html lang="en">
       <body
-        className={`${geistSans.variable} ${geistMono.variable} min-h-dvh antialiased text-zinc-900`}
+        className={`${geistSans.variable} ${geistMono.variable} min-h-dvh antialiased`}
       >
         <AppProviders cookies={cookieHeader}>
-          <Header />
-          <main className="mx-auto max-w-3xl px-4 py-10">{children}</main>
+          <SiteNav />
+          <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6 sm:py-10">{children}</main>
         </AppProviders>
       </body>
     </html>

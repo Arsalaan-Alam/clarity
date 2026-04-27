@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { baseSepolia } from "wagmi/chains";
 import {
   useConnection,
@@ -17,6 +18,7 @@ import {
   registerJobMetadata,
   postRelayEvent,
 } from "@/lib/relay";
+import { fetchListingDetail, linkListingToEscrow } from "@/lib/listings";
 
 type Step = "form" | "budget" | "done";
 
@@ -24,6 +26,8 @@ type Step = "form" | "budget" | "done";
 const TX_GAS = 500_000n;
 
 export function CreateJobForm() {
+  const searchParams = useSearchParams();
+  const listingIdParam = searchParams.get("listingId");
   const escrow = getEscrowAddress();
   const usdc = getUsdcAddress();
   const { address, status, chainId } = useConnection();
@@ -42,6 +46,24 @@ export function CreateJobForm() {
 
   const { writeContractAsync, isPending: isWriting } = useWriteContract();
 
+  useEffect(() => {
+    const p = searchParams.get("provider");
+    const e = searchParams.get("evaluator");
+    if (p && isAddress(p)) setProvider(p);
+    if (e && isAddress(e)) setEvaluator(e);
+    const lid = searchParams.get("listingId");
+    if (!lid || Number.isNaN(Number(lid))) return;
+    void fetchListingDetail(Number(lid))
+      .then(({ listing }) => {
+        setTitle(listing.title);
+        setLongDescription(listing.description);
+        setTagsCsv(listing.tags.join(", "));
+      })
+      .catch(() => {
+        /* ignore */
+      });
+  }, [searchParams]);
+
   const { data: onchainJob, refetch: refetchJob } = useReadContract({
     address: escrow ?? "0x0000000000000000000000000000000000000000",
     abi: clarityEscrowAbi,
@@ -52,24 +74,24 @@ export function CreateJobForm() {
 
   if (!escrow || !usdc) {
     return (
-      <p className="text-sm text-amber-800">
+      <p className="text-sm text-amber-200/90">
         Add{" "}
-        <code className="font-mono">NEXT_PUBLIC_ESCROW_ADDRESS</code> and{" "}
-        <code className="font-mono">NEXT_PUBLIC_USDC_ADDRESS</code> to{" "}
-        <code className="font-mono">web/.env.local</code>.
+        <code className="font-mono text-teal-200/80">NEXT_PUBLIC_ESCROW_ADDRESS</code> and{" "}
+        <code className="font-mono text-teal-200/80">NEXT_PUBLIC_USDC_ADDRESS</code> to{" "}
+        <code className="font-mono text-teal-200/80">web/.env.local</code>.
       </p>
     );
   }
 
   if (status !== "connected" || !address) {
     return (
-      <p className="text-sm text-zinc-600">Connect your wallet to continue.</p>
+      <p className="text-sm text-slate-400">Connect your wallet to continue.</p>
     );
   }
 
   if (chainId !== baseSepolia.id) {
     return (
-      <p className="text-sm text-zinc-600">Switch to Base Sepolia in the header.</p>
+      <p className="text-sm text-slate-400">Switch to Base Sepolia in the header.</p>
     );
   }
 
@@ -165,6 +187,21 @@ export function CreateJobForm() {
       });
       if (clientFromChain.toLowerCase() === address.toLowerCase()) {
         setMessage("Job created. Set budget, then fund.");
+      }
+      if (
+        listingIdParam &&
+        !Number.isNaN(Number(listingIdParam)) &&
+        clientFromChain.toLowerCase() === address.toLowerCase()
+      ) {
+        try {
+          await linkListingToEscrow({
+            listingId: Number(listingIdParam),
+            client: clientFromChain,
+            escrowJobId: Number(count),
+          });
+        } catch {
+          /* optional */
+        }
       }
     } catch (relayErr) {
       const relayFail =
@@ -308,13 +345,20 @@ export function CreateJobForm() {
   };
 
   return (
-    <div className="max-w-md space-y-6">
+    <div className="cl-card-strong mx-auto max-w-md space-y-6 rounded-xl p-6">
+      {listingIdParam ? (
+        <p className="rounded-md border border-amber-500/25 bg-amber-950/40 px-3 py-2 text-xs text-amber-100">
+          You came from <span className="font-mono">listing #{listingIdParam}</span>. Keep{" "}
+          <strong>title, description, and tags</strong> exactly as on the listing so the metadata
+          hash matches <span className="font-mono">bytes32</span> on-chain.
+        </p>
+      ) : null}
       {step === "form" && (
         <form onSubmit={handleCreate} className="space-y-4">
           <div>
-            <label className="text-xs text-zinc-500">Provider</label>
+            <label className="text-xs text-slate-500">Provider</label>
             <input
-              className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-3 py-2 font-mono text-sm"
+              className="mt-1 w-full rounded-md border border-white/10 bg-slate-900/60 px-3 py-2 font-mono text-sm text-slate-100 placeholder:text-slate-600"
               value={provider}
               onChange={(e) => setProvider(e.target.value)}
               placeholder="0x…"
@@ -322,9 +366,9 @@ export function CreateJobForm() {
             />
           </div>
           <div>
-            <label className="text-xs text-zinc-500">Evaluator</label>
+            <label className="text-xs text-slate-500">Evaluator</label>
             <input
-              className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-3 py-2 font-mono text-sm"
+              className="mt-1 w-full rounded-md border border-white/10 bg-slate-900/60 px-3 py-2 font-mono text-sm text-slate-100 placeholder:text-slate-600"
               value={evaluator}
               onChange={(e) => setEvaluator(e.target.value)}
               placeholder="0x…"
@@ -332,19 +376,19 @@ export function CreateJobForm() {
             />
           </div>
           <div>
-            <label className="text-xs text-zinc-500">Expires in (hours)</label>
+            <label className="text-xs text-slate-500">Expires in (hours)</label>
             <input
               type="number"
               min={1}
-              className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm"
+              className="mt-1 w-full rounded-md border border-white/10 bg-slate-900/60 px-3 py-2 text-sm text-slate-100"
               value={hours}
               onChange={(e) => setHours(e.target.value)}
             />
           </div>
           <div>
-            <label className="text-xs text-zinc-500">Title</label>
+            <label className="text-xs text-slate-500">Title</label>
             <input
-              className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm"
+              className="mt-1 w-full rounded-md border border-white/10 bg-slate-900/60 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-600"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               placeholder="Short headline"
@@ -352,9 +396,9 @@ export function CreateJobForm() {
             />
           </div>
           <div>
-            <label className="text-xs text-zinc-500">Description</label>
+            <label className="text-xs text-slate-500">Description</label>
             <textarea
-              className="mt-1 min-h-[120px] w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm"
+              className="mt-1 min-h-[120px] w-full rounded-md border border-white/10 bg-slate-900/60 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-600"
               value={longDescription}
               onChange={(e) => setLongDescription(e.target.value)}
               placeholder="Scope, acceptance criteria, links…"
@@ -362,26 +406,26 @@ export function CreateJobForm() {
             />
           </div>
           <div>
-            <label className="text-xs text-zinc-500">Tags (optional, comma-separated)</label>
+            <label className="text-xs text-slate-500">Tags (optional, comma-separated)</label>
             <input
-              className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm"
+              className="mt-1 w-full rounded-md border border-white/10 bg-slate-900/60 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-600"
               value={tagsCsv}
               onChange={(e) => setTagsCsv(e.target.value)}
               placeholder="solidity, design"
             />
           </div>
-          <p className="text-xs text-zinc-500">
+          <p className="text-xs text-slate-500">
             Metadata is canonicalized and hashed; that <span className="font-mono">bytes32</span> is
             written on-chain and stored on the relay.
           </p>
-          <p className="text-xs text-zinc-600">
-            <span className="text-zinc-500">You will create this job as</span>{" "}
-            <span className="font-mono break-all">{address}</span>
+          <p className="text-xs text-slate-400">
+            <span className="text-slate-500">You will create this job as</span>{" "}
+            <span className="font-mono break-all text-slate-300">{address}</span>
           </p>
           <button
             type="submit"
             disabled={isWriting}
-            className="w-full rounded-md bg-zinc-900 py-2 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-50"
+            className="w-full rounded-md bg-teal-500 py-2 text-sm font-semibold text-slate-950 hover:bg-teal-400 disabled:opacity-50"
           >
             {isWriting ? "Submitting…" : "1. Create on-chain job"}
           </button>
@@ -390,26 +434,26 @@ export function CreateJobForm() {
 
       {step === "budget" && jobId != null && (
         <div className="space-y-4">
-          <div className="text-sm text-zinc-600 space-y-2">
+          <div className="space-y-2 text-sm text-slate-300">
             <p>
               Job id: <span className="font-mono">{jobId.toString()}</span>
             </p>
             {address ? (
               <p>
-                <span className="text-zinc-500">Connected in this app: </span>
+                <span className="text-slate-500">Connected in this app: </span>
                 <span className="font-mono text-xs break-all">{address}</span>
               </p>
             ) : null}
             {onchainJob && Array.isArray(onchainJob) && (
               <p>
-                <span className="text-zinc-500">On-chain client (must match to budget/fund): </span>
+                <span className="text-slate-500">On-chain client (must match to budget/fund): </span>
                 <span className="font-mono text-xs break-all">
                   {String((onchainJob as readonly unknown[])[0])}
                 </span>
                 {address &&
                   String((onchainJob as readonly unknown[])[0]).toLowerCase() !==
                     address.toLowerCase() && (
-                    <span className="block text-amber-800 text-xs mt-2 leading-relaxed">
+                    <span className="mt-2 block text-xs leading-relaxed text-amber-200">
                       Switch Rabby (or your wallet) to this exact address, or create a new job while
                       connected as the client you intend. This job is already owned on-chain by the
                       address above.
@@ -420,9 +464,9 @@ export function CreateJobForm() {
           </div>
           <form onSubmit={runBudget} className="space-y-3">
             <div>
-              <label className="text-xs text-zinc-500">Budget (mUSDC)</label>
+              <label className="text-xs text-slate-500">Budget (mUSDC)</label>
               <input
-                className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm"
+                className="mt-1 w-full rounded-md border border-white/10 bg-slate-900/60 px-3 py-2 text-sm text-slate-100"
                 value={budget}
                 onChange={(e) => setBudget(e.target.value)}
                 required
@@ -431,7 +475,7 @@ export function CreateJobForm() {
             <button
               type="submit"
               disabled={isWriting}
-              className="w-full rounded-md border border-zinc-200 py-2 text-sm font-medium hover:bg-zinc-50 disabled:opacity-50"
+              className="w-full rounded-md border border-white/15 py-2 text-sm font-medium text-slate-200 hover:bg-white/5 disabled:opacity-50"
             >
               2. Set budget
             </button>
@@ -440,7 +484,7 @@ export function CreateJobForm() {
             <button
               type="submit"
               disabled={isWriting}
-              className="w-full rounded-md bg-zinc-900 py-2 text-sm font-medium text-white disabled:opacity-50"
+              className="w-full rounded-md bg-teal-500 py-2 text-sm font-semibold text-slate-950 hover:bg-teal-400 disabled:opacity-50"
             >
               3. Approve + fund
             </button>
@@ -449,10 +493,10 @@ export function CreateJobForm() {
       )}
 
       {step === "done" && jobId != null && (
-        <p className="text-sm text-zinc-600">
+        <p className="text-sm text-slate-300">
           {message}{" "}
           <Link
-            className="text-blue-600 hover:underline"
+            className="font-medium text-teal-400 hover:text-teal-300 hover:underline"
             href={`/jobs/${jobId.toString()}`}
           >
             Open job
@@ -461,7 +505,7 @@ export function CreateJobForm() {
       )}
 
       {message && step !== "done" && (
-        <p className="text-sm text-zinc-600">{message}</p>
+        <p className="text-sm text-slate-300">{message}</p>
       )}
     </div>
   );

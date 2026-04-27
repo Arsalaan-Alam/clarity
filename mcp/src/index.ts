@@ -10,7 +10,15 @@ import {
 import { clarityEscrowAbi } from "./abi/escrow.js";
 import { usdcAbi } from "./abi/usdc.js";
 import { assertChain, formatUsdc, getAccount, getWalletClient, normalizeAddress, parseUsdc, publicClient, toBytes32 } from "./protocol.js";
-import { registerJobMetadata, postRelayEvent } from "./relay.js";
+import {
+  registerJobMetadata,
+  postRelayEvent,
+  relayAcceptBid,
+  relayCancelListing,
+  relayCreateListing,
+  relayListListings,
+  relayPostBid,
+} from "./relay.js";
 import { decryptDeliverable, encryptDeliverable } from "./encryption.js";
 
 const COMMANDS = [
@@ -26,6 +34,11 @@ const COMMANDS = [
   "read_deliverable",
   "sync_job",
   "list_jobs",
+  "create_listing",
+  "list_listings",
+  "bid_listing",
+  "accept_listing",
+  "cancel_listing",
 ] as const;
 
 function usage() {
@@ -51,6 +64,56 @@ function extractPrivateKeyArg(args: string[]) {
 }
 
 /** Strips `--title`, `--desc` / `--description`, `--tags` for create_job. */
+function parseListingCreateFlags(toolArgs: string[]) {
+  const rest: string[] = [];
+  let title: string | undefined;
+  let description: string | undefined;
+  let tags: string[] | undefined;
+  let budgetHint: string | undefined;
+  let hours = 72;
+  for (let i = 0; i < toolArgs.length; i++) {
+    const a = toolArgs[i];
+    if (a === "--title") {
+      const v = toolArgs[++i];
+      if (!v || v.startsWith("--")) throw new Error("create_listing: --title needs a value.");
+      title = v;
+      continue;
+    }
+    if (a === "--desc" || a === "--description") {
+      const v = toolArgs[++i];
+      if (!v || v.startsWith("--")) throw new Error("create_listing: --desc needs a value.");
+      description = v;
+      continue;
+    }
+    if (a === "--tags") {
+      const v = toolArgs[++i];
+      if (!v || v.startsWith("--")) throw new Error("create_listing: --tags needs a value.");
+      tags = v
+        .split(",")
+        .map((t) => t.trim())
+        .filter(Boolean);
+      continue;
+    }
+    if (a === "--budget-hint") {
+      const v = toolArgs[++i];
+      if (!v || v.startsWith("--")) throw new Error("create_listing: --budget-hint needs a value.");
+      budgetHint = v;
+      continue;
+    }
+    if (a === "--hours") {
+      const v = toolArgs[++i];
+      if (!v || v.startsWith("--")) throw new Error("create_listing: --hours needs a value.");
+      hours = Number(v);
+      continue;
+    }
+    rest.push(a);
+  }
+  if (rest.length > 0) {
+    throw new Error(`create_listing: unexpected arguments: ${rest.join(" ")}`);
+  }
+  return { title, description, tags, budgetHint, hours };
+}
+
 function parseCreateJobCliArgs(toolArgs: string[]) {
   const positional: string[] = [];
   let title: string | undefined;
@@ -483,6 +546,80 @@ async function listJobs() {
   console.log(JSON.stringify(data, null, 2));
 }
 
+async function createListingCmd(toolArgs: string[], privateKey?: string) {
+  if (!privateKey && !CLARITY_PRIVATE_KEY) {
+    throw new Error("create_listing requires CLARITY_PRIVATE_KEY or --pk (client wallet).");
+  }
+  const flags = parseListingCreateFlags(toolArgs);
+  if (!flags.title?.trim() || !flags.description?.trim()) {
+    throw new Error(
+      "Usage: create_listing --title <t> --desc <description> [--tags a,b] [--budget-hint 5] [--hours 72] [--pk <key>]",
+    );
+  }
+  if (!Number.isFinite(flags.hours) || flags.hours <= 0) {
+    throw new Error("create_listing: --hours must be a positive number.");
+  }
+  const account = getAccount(privateKey);
+  const { contentHash } = await registerJobMetadata({
+    title: flags.title.trim(),
+    description: flags.description.trim(),
+    tags: flags.tags,
+  });
+  const listingExpiresAt = Math.floor(Date.now() / 1000) + flags.hours * 3600;
+  const data = await relayCreateListing({
+    chainId: BASE_SEPOLIA_CHAIN_ID,
+    client: account.address,
+    title: flags.title.trim(),
+    description: flags.description.trim(),
+    tags: flags.tags,
+    contentHash,
+    budgetHintUsdc: flags.budgetHint?.trim() || undefined,
+    listingExpiresAt,
+  });
+  console.log(JSON.stringify(data, null, 2));
+}
+
+async function listListingsCmd(statusArg?: string) {
+  const data = await relayListListings(statusArg || "open");
+  console.log(JSON.stringify(data, null, 2));
+}
+
+async function bidListingCmd(listingIdArg: string, message: string, privateKey?: string) {
+  const listingId = Number(listingIdArg);
+  if (!Number.isFinite(listingId) || listingId <= 0) throw new Error("Invalid listing id.");
+  const account = getAccount(privateKey);
+  const data = await relayPostBid(listingId, account.address, message);
+  console.log(JSON.stringify(data, null, 2));
+}
+
+async function acceptListingCmd(
+  listingIdArg: string,
+  bidIdArg: string,
+  evaluatorArg: string,
+  privateKey?: string,
+) {
+  const listingId = Number(listingIdArg);
+  const bidId = Number(bidIdArg);
+  if (!Number.isFinite(listingId) || listingId <= 0) throw new Error("Invalid listing id.");
+  if (!Number.isFinite(bidId) || bidId <= 0) throw new Error("Invalid bid id.");
+  const account = getAccount(privateKey);
+  const data = await relayAcceptBid({
+    listingId,
+    client: account.address,
+    bidId,
+    evaluator: normalizeAddress(evaluatorArg),
+  });
+  console.log(JSON.stringify(data, null, 2));
+}
+
+async function cancelListingCmd(listingIdArg: string, privateKey?: string) {
+  const listingId = Number(listingIdArg);
+  if (!Number.isFinite(listingId) || listingId <= 0) throw new Error("Invalid listing id.");
+  const account = getAccount(privateKey);
+  const data = await relayCancelListing(listingId, account.address);
+  console.log(JSON.stringify(data, null, 2));
+}
+
 async function syncJob(jobIdArg: string) {
   const escrowAddress = requireAddress(ESCROW_ADDRESS, "CLARITY_ESCROW_ADDRESS");
   const jobId = BigInt(jobIdArg);
@@ -591,6 +728,30 @@ async function main() {
       return;
     case "list_jobs":
       await listJobs();
+      return;
+    case "create_listing":
+      await createListingCmd(toolArgs, privateKey);
+      return;
+    case "list_listings":
+      await listListingsCmd(toolArgs[0]);
+      return;
+    case "bid_listing":
+      if (toolArgs.length < 2) {
+        throw new Error("Usage: bid_listing <listingId> <message> [--pk <agentPrivateKey>]");
+      }
+      await bidListingCmd(toolArgs[0], toolArgs[1], privateKey);
+      return;
+    case "accept_listing":
+      if (toolArgs.length < 3) {
+        throw new Error(
+          "Usage: accept_listing <listingId> <bidId> <evaluatorAddress> [--pk <clientPrivateKey>]",
+        );
+      }
+      await acceptListingCmd(toolArgs[0], toolArgs[1], toolArgs[2], privateKey);
+      return;
+    case "cancel_listing":
+      if (toolArgs.length < 1) throw new Error("Usage: cancel_listing <listingId> [--pk <clientPrivateKey>]");
+      await cancelListingCmd(toolArgs[0], privateKey);
       return;
     default:
       usage();

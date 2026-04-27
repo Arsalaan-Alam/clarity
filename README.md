@@ -98,3 +98,17 @@ curl http://localhost:8788/relay/jobs
 # Job timeline
 curl "http://localhost:8788/relay/events?jobId=1"
 ```
+
+## Open market listings (relay only, in-memory)
+
+Browse in the app under **Listings**, or use the relay HTTP API (no DB; data is lost on relay restart):
+
+- `GET /relay/listings` — default `status=open` (non-expired). Use `?status=all` or `assigned`, `onchain`, `cancelled`, `open`.
+- `POST /relay/listings` — body: `chainId`, `client`, `title`, `description`, `tags?`, `contentHash` (must match canonical metadata), `budgetHintUsdc?`, `listingExpiresAt` (unix seconds).
+- `GET /relay/listings/:id` — listing + bids.
+- `POST /relay/listings/:id/bids` — `{ agentAddress, message }`.
+- `POST /relay/listings/:id/accept` — `{ client, bidId, evaluator }`.
+- `POST /relay/listings/:id/cancel` — `{ client }`.
+- `POST /relay/listings/:id/onchain` — `{ client, escrowJobId }` after the client creates the escrow job on-chain.
+
+MCP: `create_listing`, `list_listings`, `bid_listing`, `accept_listing`, `cancel_listing` (see `npm run start --` usage in `mcp/src/index.ts`).

@@ -15,6 +15,11 @@ import {
 } from "@reown/appkit/react";
 import { isAppKitEnabled } from "@/lib/wagmi-config";
 
+export type ConnectButtonProps = {
+  /** Dark header bar (teal primary, light text). */
+  navAppearance?: "light" | "dark";
+};
+
 function shortAddress(addr: string) {
   return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
 }
@@ -23,7 +28,8 @@ function sortConnectors(list: readonly Connector[]) {
   return [...list].sort((a, b) => a.name.localeCompare(b.name));
 }
 
-function LegacyConnectMenu() {
+function LegacyConnectMenu({ navAppearance = "light" }: ConnectButtonProps) {
+  const dark = navAppearance === "dark";
   const { status, address, chainId, connector } = useConnection();
   const { disconnect } = useDisconnect();
   const { connectAsync, connectors, isPending } = useConnect();
@@ -52,6 +58,10 @@ function LegacyConnectMenu() {
     [connectAsync],
   );
 
+  const btnPrimary = dark
+    ? "rounded-md bg-teal-500 px-3 py-1.5 text-xs font-semibold text-slate-950 hover:bg-teal-400 disabled:opacity-50"
+    : "rounded-md bg-zinc-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-zinc-800 disabled:opacity-50";
+
   if (status === "connected" && address) {
     if (chainId !== baseSepolia.id) {
       return (
@@ -59,7 +69,7 @@ function LegacyConnectMenu() {
           type="button"
           onClick={() => switchChainAsync({ chainId: baseSepolia.id })}
           disabled={isSwitching}
-          className="rounded-md bg-zinc-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-zinc-800 disabled:opacity-50"
+          className={btnPrimary}
         >
           {isSwitching ? "Switching…" : "Base Sepolia"}
         </button>
@@ -68,17 +78,25 @@ function LegacyConnectMenu() {
     return (
       <div className="flex max-w-sm flex-col items-end gap-1 sm:flex-row sm:items-center sm:gap-2">
         <div className="flex flex-col items-end text-right">
-          <span className="font-mono text-xs text-zinc-500 max-sm:max-w-32 max-sm:truncate sm:inline">
+          <span
+            className={`font-mono text-xs max-sm:max-w-32 max-sm:truncate sm:inline ${
+              dark ? "text-slate-300" : "text-zinc-500"
+            }`}
+          >
             {shortAddress(address)}
           </span>
-          <span className="text-[10px] text-zinc-400">
+          <span className={`text-[10px] ${dark ? "text-slate-500" : "text-zinc-400"}`}>
             {connector?.name ? connector.name : "connected"}
           </span>
         </div>
         <button
           type="button"
           onClick={() => disconnect()}
-          className="shrink-0 rounded-md border border-zinc-200 px-2.5 py-1.5 text-xs text-zinc-700 hover:border-zinc-300 hover:bg-zinc-50"
+          className={
+            dark
+              ? "shrink-0 rounded-md border border-white/15 px-2.5 py-1.5 text-xs text-slate-200 hover:bg-white/5"
+              : "shrink-0 rounded-md border border-zinc-200 px-2.5 py-1.5 text-xs text-zinc-700 hover:border-zinc-300 hover:bg-zinc-50"
+          }
         >
           Disconnect
         </button>
@@ -88,7 +106,7 @@ function LegacyConnectMenu() {
 
   if (sorted.length === 0) {
     return (
-      <p className="text-xs text-zinc-500">
+      <p className={`text-xs ${dark ? "text-slate-500" : "text-zinc-500"}`}>
         No browser wallet found. Install a wallet extension and refresh.
       </p>
     );
@@ -100,7 +118,7 @@ function LegacyConnectMenu() {
         type="button"
         onClick={() => setOpen((o) => !o)}
         disabled={isPending}
-        className="rounded-md bg-zinc-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-zinc-800 disabled:opacity-50"
+        className={btnPrimary}
         aria-expanded={open}
         aria-haspopup="true"
       >
@@ -108,7 +126,11 @@ function LegacyConnectMenu() {
       </button>
       {open && (
         <ul
-          className="absolute right-0 z-50 mt-1 max-h-72 w-64 overflow-auto rounded-md border border-zinc-200 bg-white py-1 text-left shadow-md"
+          className={`absolute right-0 z-50 mt-1 max-h-72 w-64 overflow-auto rounded-md py-1 text-left shadow-lg ${
+            dark
+              ? "border border-slate-600 bg-slate-900"
+              : "border border-zinc-200 bg-white shadow-md"
+          }`}
           role="menu"
         >
           {sorted.map((c, i) => (
@@ -118,7 +140,11 @@ function LegacyConnectMenu() {
                 role="menuitem"
                 disabled={isPending}
                 onClick={() => runConnect(c)}
-                className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-zinc-800 hover:bg-zinc-50 disabled:opacity-50"
+                className={`flex w-full items-center gap-2 px-3 py-2 text-left text-xs disabled:opacity-50 ${
+                  dark
+                    ? "text-slate-200 hover:bg-slate-800"
+                    : "text-zinc-800 hover:bg-zinc-50"
+                }`}
               >
                 {c.icon ? (
                   // eslint-disable-next-line @next/next/no-img-element
@@ -130,7 +156,11 @@ function LegacyConnectMenu() {
                     height={20}
                   />
                 ) : (
-                  <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-zinc-100 text-[9px] font-medium text-zinc-500">
+                  <span
+                    className={`flex h-5 w-5 shrink-0 items-center justify-center rounded text-[9px] font-medium ${
+                      dark ? "bg-slate-800 text-slate-400" : "bg-zinc-100 text-zinc-500"
+                    }`}
+                  >
                     {c.name.slice(0, 1)}
                   </span>
                 )}
@@ -145,9 +175,14 @@ function LegacyConnectMenu() {
 }
 
 /** Reown AppKit: WalletConnect QR + Coinbase + injected wallets (single modal). */
-function AppKitHeaderControls() {
+function AppKitHeaderControls({ navAppearance = "light" }: ConnectButtonProps) {
+  const dark = navAppearance === "dark";
   const { status, chainId } = useConnection();
   const { switchChainAsync, isPending: isSwitching } = useSwitchChain();
+
+  const btnPrimary = dark
+    ? "rounded-md bg-teal-500 px-3 py-1.5 text-xs font-semibold text-slate-950 hover:bg-teal-400 disabled:opacity-50"
+    : "rounded-md bg-zinc-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-zinc-800 disabled:opacity-50";
 
   if (status === "connected" && chainId !== baseSepolia.id) {
     return (
@@ -155,7 +190,7 @@ function AppKitHeaderControls() {
         type="button"
         onClick={() => switchChainAsync({ chainId: baseSepolia.id })}
         disabled={isSwitching}
-        className="rounded-md bg-zinc-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-zinc-800 disabled:opacity-50"
+        className={btnPrimary}
       >
         {isSwitching ? "Switching…" : "Base Sepolia"}
       </button>
@@ -164,23 +199,29 @@ function AppKitHeaderControls() {
 
   if (status === "connected") {
     return (
-      <div className="flex items-center gap-2 [&_button]:rounded-md [&_button]:border [&_button]:border-zinc-200 [&_button]:px-2.5 [&_button]:py-1.5 [&_button]:text-xs">
+      <div
+        className={
+          dark
+            ? "flex items-center gap-2 [&_button]:rounded-md [&_button]:border [&_button]:border-white/15 [&_button]:bg-slate-900/80 [&_button]:px-2.5 [&_button]:py-1.5 [&_button]:text-xs [&_button]:text-slate-200"
+            : "flex items-center gap-2 [&_button]:rounded-md [&_button]:border [&_button]:border-zinc-200 [&_button]:px-2.5 [&_button]:py-1.5 [&_button]:text-xs"
+        }
+      >
         <AppKitAccountButton />
       </div>
     );
   }
 
   return (
-    <div className="inline-flex">
+    <div className="inline-flex [&_button]:text-xs">
       <AppKitConnectButton />
     </div>
   );
 }
 
-export function ConnectButton() {
+export function ConnectButton({ navAppearance = "light" }: ConnectButtonProps) {
   if (isAppKitEnabled()) {
-    return <AppKitHeaderControls />;
+    return <AppKitHeaderControls navAppearance={navAppearance} />;
   }
 
-  return <LegacyConnectMenu />;
+  return <LegacyConnectMenu navAppearance={navAppearance} />;
 }
