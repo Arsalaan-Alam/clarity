@@ -33,6 +33,21 @@ CLARITY_ESCROW_ADDRESS=0x...
 ```bash
 cd relay && npm install
 cd ../mcp && npm install
+cd ../web && npm install
+```
+
+## Frontend (`web/`)
+
+Next.js app (Base Sepolia, wagmi, minimal UI).
+
+```bash
+cd web && npm run dev
+```
+
+Open [http://localhost:3000](http://localhost:3000). Start the relay in another terminal:
+
+```bash
+cd relay && PORT=8788 npm run start
 ```
 
 ## Start Relay

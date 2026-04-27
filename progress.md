@@ -80,3 +80,7 @@
   - `GET /relay/events?jobId=2` returns ordered timeline entries
 - Removed `progress.txt`; tracking now only in `progress.md`.
 - Added root `README.md` with one-shot backend execution flow (relay startup + end-to-end MCP command chain).
+- Added **frontend** in `web/` (Next.js 15, wagmi v3, Tailwind v4): landing, jobs list, job detail (chain + relay), create wizard (create → set budget → approve + fund).
+- Added `web/.env.local.example` for `NEXT_PUBLIC_*` contract + relay URLs.
+- Enabled **CORS** on relay (`hono/cors`) so the browser can call the relay API.
+- Bumped `web/tsconfig.json` target to `ES2020` for BigInt literals.

@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { cors } from "hono/cors";
 import { serve } from "@hono/node-server";
 
 type JobEvent = {
@@ -31,6 +32,15 @@ type DeliverableRecord = {
 };
 
 const app = new Hono();
+
+app.use(
+  "*",
+  cors({
+    origin: (origin) => origin || "*",
+    allowMethods: ["GET", "POST", "OPTIONS"],
+    allowHeaders: ["Content-Type"],
+  }),
+);
 
 const jobs: RelayJob[] = [];
 const events: JobEvent[] = [];
