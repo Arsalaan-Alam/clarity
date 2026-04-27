@@ -24,3 +24,26 @@
   - EOA-first wallet mode
   - ERC-8004 deferred for MVP
 - Added root `.gitignore` for env files, Node/TS artifacts, Foundry build outputs, logs, and local editor/runtime files.
+- Updated `relay/package.json` to include `@hono/node-server`.
+- Added MCP ABIs:
+  - `mcp/src/abi/escrow.ts`
+  - `mcp/src/abi/usdc.ts`
+- Added MCP execution modules:
+  - `mcp/src/protocol.ts` (EOA wallet/public clients + chain guard + unit helpers)
+  - `mcp/src/relay.ts` (POST job events to relay)
+- Extended `mcp/src/config.ts` with `CLARITY_PRIVATE_KEY`.
+- Replaced `mcp/src/index.ts` bootstrap with command-runner tool flow:
+  - `setup_wallet`, `get_wallet_info`, `create_job`, `set_budget`, `fund_job`,
+    `submit_work`, `complete_job`, `reject_job`, `get_job`, `list_jobs`.
+  - Writes now execute on Base Sepolia and publish relay events.
+- Installed dependencies for new services:
+  - `relay/npm install` (created `relay/package-lock.json`)
+  - `mcp/npm install` (created `mcp/package-lock.json`)
+- Fixed MCP TypeScript issues in `mcp/src/index.ts`:
+  - `createJob` now passes `expiresAt` as `bigint` (uint64 ABI alignment).
+  - `JobCreated` event decode now guards union type before reading `jobId`.
+- Deployed to Base Sepolia:
+  - `MockUSDC` at `0x15d98039FB2a8673C82A59A1CDCb7F1eDE88496C` (`tx: 0x8e4e17b17626f0b5a5aa2a9780c17adbf7916beaba02b4231eb625bff0c780dc`)
+  - `ClarityEscrow` at `0xB324Ba16A17055AfbB1470d3E5B019cDfE54bA85` (`tx: 0xa207eb683efeee9611e2768c9957c8bb7d95e0e37c8d35eba42de5a7f6a340c9`)
+- Minted `10,000 mUSDC` to deployer wallet (`tx: 0x3d2141c4d3e48a6acbc9ad0dbed7537c1f276a3c20b32bc2d77025887bee4ee8`).
+- Updated `.env` with deployed `CLARITY_USDC_ADDRESS` and `CLARITY_ESCROW_ADDRESS`.
