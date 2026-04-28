@@ -91,3 +91,19 @@
 - **Wallet:** `web` uses **WalletConnect only** (no injected MetaMask connector). `NEXT_PUBLIC_WC_PROJECT_ID` (Reown / [cloud.reown.com](https://cloud.reown.com)), `NEXT_PUBLIC_APP_URL` for WC metadata. Implementation: `walletConnect` via `@clarity/wc-connector` webpack alias (avoids `wagmi/connectors` barrel + Next resolution issues), `connect-button.tsx` shows setup hint if project id missing. Deps: `@wagmi/connectors`, `@wagmi/core`, `@walletconnect/ethereum-provider` ~2.20, `slow-redact` for pino bundle. `src/types/wagmi-walletconnect.d.ts` for the alias module.
 - **Docs:** `README.md` — web env block for WalletConnect + `NEXT_PUBLIC_APP_URL`.
 - **Connect UX:** `injected()` + default `multiInjectedProviderDiscovery` (EIP-6963) so each browser extension gets its own connector; `connect-button.tsx` lists connectors. WalletConnect removed (browser-only).
+- **Lifecycle simplification (final):**
+  - `contracts/src/ClarityEscrow.sol` now enforces **evaluator-only** `rejectJob` and `completeJob` flow (client cannot reject).
+  - Relay + MCP + web migrated to **plaintext deliverables**; removed prepare/reveal and encryption helper paths.
+  - `deliverableCid` is now consistently `keccak256(utf8(plaintext))` across web + MCP.
+- **Contract redeploy:** deployed new `ClarityEscrow` on Base Sepolia at `0x53c95101e09fe921d0eF0e5b43729Af2c71587E4` via `contracts/script/DeployClarity.s.sol` (USDC `0x15d98039FB2a8673C82A59A1CDCb7F1eDE88496C`, treasury = deployer). Updated `.env` + `web/.env.local` escrow address.
+- **MCP DX:** improved `read_deliverable` 404 error messaging in `mcp/src/index.ts` with actionable guidance (pre-submission states vs relay restart/wrong relay URL cases).
+- **Create flow UX:** `web/src/app/create/create-job-form.tsx`
+  - auto-prefills budget from listing `budgetHintUsdc`,
+  - per-action pending states with disabled buttons + spinner icons (`create` / `set budget` / `fund`),
+  - reduced “escrow” copy in user-facing labels.
+- **Job detail UX:** `web/src/app/jobs/[id]/job-detail.tsx`
+  - spinner-based loading blocks for relay/on-chain/submitted work,
+  - per-action pending states for submit/approve/reject/refund,
+  - explicit evaluator guards remain in action handlers.
+- **Jobs list polish:** `web/src/app/jobs/jobs-list.tsx` now displays job title when available by resolving from relay job rows or relay metadata using `descriptionCid` (`fetchJobTitleForList` in `web/src/lib/relay.ts`).
+- **Global copy + loading polish:** replaced several text-only “Loading…” and “...ing” states with spinner indicators in listings/create/faucet pages; minimized “escrow” wording in product copy where possible.
