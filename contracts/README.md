@@ -1,66 +1,44 @@
-## Foundry
+# Contracts (`contracts/`)
 
-**Foundry is a blazing fast, portable and modular toolkit for Ethereum application development written in Rust.**
+This package contains the Clarity smart contracts and Foundry tests.
 
-Foundry consists of:
+## Contracts
 
--   **Forge**: Ethereum testing framework (like Truffle, Hardhat and DappTools).
--   **Cast**: Swiss army knife for interacting with EVM smart contracts, sending transactions and getting chain data.
--   **Anvil**: Local Ethereum node, akin to Ganache, Hardhat Network.
--   **Chisel**: Fast, utilitarian, and verbose solidity REPL.
+- `src/ClarityEscrow.sol`
+  - Job lifecycle contract used by Clarity app
+  - Evaluator-only completion/rejection
+- `src/MockUSDC.sol`
+  - 6-decimal mintable ERC20 for testing/demo flows
 
-## Documentation
+## Test
 
-https://book.getfoundry.sh/
-
-## Usage
-
-### Build
-
-```shell
-$ forge build
+```bash
+forge test
 ```
 
-### Test
+## Deploy `ClarityEscrow`
 
-```shell
-$ forge test
+Script: `script/DeployClarity.s.sol`
+
+Required env:
+
+- `USDC_ADDRESS`
+- `TREASURY_ADDRESS`
+- optional `PLATFORM_FEE_BP` (default `500`)
+- optional `EVALUATOR_FEE_BP` (default `500`)
+
+Example:
+
+```bash
+export USDC_ADDRESS=0x...
+export TREASURY_ADDRESS=0x...
+forge script script/DeployClarity.s.sol:DeployClarity \
+  --rpc-url "$CLARITY_RPC_URL" \
+  --broadcast \
+  --private-key "$CLARITY_PRIVATE_KEY"
 ```
 
-### Format
+After deploy, update app env:
 
-```shell
-$ forge fmt
-```
-
-### Gas Snapshots
-
-```shell
-$ forge snapshot
-```
-
-### Anvil
-
-```shell
-$ anvil
-```
-
-### Deploy
-
-```shell
-$ forge script script/Counter.s.sol:CounterScript --rpc-url <your_rpc_url> --private-key <your_private_key>
-```
-
-### Cast
-
-```shell
-$ cast <subcommand>
-```
-
-### Help
-
-```shell
-$ forge --help
-$ anvil --help
-$ cast --help
-```
+- root `.env` => `CLARITY_ESCROW_ADDRESS`
+- `web/.env.local` => `NEXT_PUBLIC_ESCROW_ADDRESS`
