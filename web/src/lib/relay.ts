@@ -1,3 +1,4 @@
+import { keccak256, stringToBytes, type Hex } from "viem";
 import { getRelayUrl } from "@/lib/env";
 
 export type RelayJobStatus =
@@ -145,4 +146,44 @@ export async function fetchRelayJobDetail(
   if (res.status === 404) return null;
   if (!res.ok) throw new Error("relay job detail failed");
   return (await res.json()) as { job: RelayJob; timeline: RelayEvent[] };
+}
+
+/** Must match MCP `submit_work` and `keccak256(stringToBytes(plaintext))` for `submitWork`’s `deliverableCid`. */
+export function deliverableCidFromPlaintext(plaintext: string): Hex {
+  return keccak256(stringToBytes(plaintext));
+}
+
+export async function fetchDeliverablePlaintext(jobId: number): Promise<string | null> {
+  const res = await fetch(`${base()}/relay/deliverables/${jobId}`);
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`deliverable fetch failed: ${res.status}`);
+  const data = (await res.json()) as { plaintext?: string };
+  return data.plaintext ?? null;
+}
+
+/** Relay reads escrow and upserts in-memory job + `job:synced` timeline (parity with MCP `sync_job`). */
+export async function syncRelayJobFromChain(jobId: number): Promise<void> {
+  const res = await fetch(`${base()}/relay/jobs/${jobId}/sync-from-chain`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+  });
+  if (!res.ok) {
+    const t = await res.text();
+    throw new Error(`Relay sync-from-chain failed: ${res.status} ${t}`);
+  }
+}
+
+export async function postRelayDeliverablePlaintext(input: {
+  jobId: number;
+  plaintext: string;
+}): Promise<void> {
+  const res = await fetch(`${base()}/relay/deliverables`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ jobId: input.jobId, plaintext: input.plaintext }),
+  });
+  if (!res.ok) {
+    const t = await res.text();
+    throw new Error(`Deliverable store failed: ${res.status} ${t}`);
+  }
 }

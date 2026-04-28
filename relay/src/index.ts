@@ -2,12 +2,25 @@ import { randomBytes } from "node:crypto";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { serve } from "@hono/node-server";
-import { isAddress } from "viem";
+import { baseSepolia } from "viem/chains";
+import { createPublicClient, http, isAddress } from "viem";
 import {
   canonicalJobMetadataJson,
   metadataContentHash,
   type JobMetadataInput,
 } from "./metadata.js";
+import { clarityEscrowJobsAbi } from "./escrowAbi.js";
+
+const CLARITY_RPC_URL = process.env.CLARITY_RPC_URL || "https://sepolia.base.org";
+const CLARITY_ESCROW_ADDRESS = (process.env.CLARITY_ESCROW_ADDRESS || "").trim();
+
+const chainPublicClient =
+  CLARITY_ESCROW_ADDRESS && /^0x[a-fA-F0-9]{40}$/i.test(CLARITY_ESCROW_ADDRESS)
+    ? createPublicClient({
+        chain: baseSepolia,
+        transport: http(CLARITY_RPC_URL),
+      })
+    : null;
 
 type JobEvent = {
   id: number;
@@ -34,10 +47,7 @@ type RelayJob = {
 
 type DeliverableRecord = {
   jobId: number;
-  ciphertext: string;
-  iv: string;
-  authTag: string;
-  algorithm: "aes-256-gcm";
+  plaintext: string;
   updatedAt: number;
 };
 
@@ -96,6 +106,25 @@ let nextBidId = 1;
 /** Proves control of listing for cancel / accept / onchain (not sent on GET). */
 const listingOwnerTokens = new Map<number, string>();
 
+function chainStatusToRelayJobStatus(st: number): RelayJob["status"] {
+  switch (st) {
+    case 0:
+      return "open";
+    case 1:
+      return "funded";
+    case 2:
+      return "submitted";
+    case 3:
+      return "completed";
+    case 4:
+      return "rejected";
+    case 5:
+      return "expired";
+    default:
+      return "open";
+  }
+}
+
 app.get("/health", (c) => c.json({ ok: true, service: "clarity-relay" }));
 
 app.get("/relay/jobs", (c) => {
@@ -114,6 +143,71 @@ app.get("/relay/jobs/:id", (c) => {
     job,
     timeline: events.filter((e) => e.jobId === id).sort((a, b) => a.at - b.at),
   });
+});
+
+/** Upsert relay job + timeline from on-chain `jobs(jobId)` (e.g. after MCP / cast txs). */
+app.post("/relay/jobs/:jobId/sync-from-chain", async (c) => {
+  if (!chainPublicClient) {
+    return c.json({ error: "relay_escrow_not_configured" }, 503);
+  }
+  const jobId = Number(c.req.param("jobId"));
+  if (!Number.isFinite(jobId) || jobId <= 0) {
+    return c.json({ error: "invalid_job_id" }, 400);
+  }
+
+  try {
+    const row = await chainPublicClient.readContract({
+      address: CLARITY_ESCROW_ADDRESS as `0x${string}`,
+      abi: clarityEscrowJobsAbi,
+      functionName: "jobs",
+      args: [BigInt(jobId)],
+    });
+    const client = String(row[0]);
+    if (client.toLowerCase() === "0x0000000000000000000000000000000000000000") {
+      return c.json({ error: "job_not_on_chain" }, 404);
+    }
+    const provider = String(row[1]);
+    const evaluator = String(row[2]);
+    const descriptionCid = String(row[5]);
+    const st = Number(row[7]);
+    const relayStatus = chainStatusToRelayJobStatus(st);
+
+    const existing = jobs.find((j) => j.id === jobId);
+    if (!existing) {
+      jobs.push({
+        id: jobId,
+        chainId: baseSepolia.id,
+        escrow: CLARITY_ESCROW_ADDRESS,
+        client,
+        provider,
+        evaluator,
+        descriptionCid,
+        status: relayStatus,
+        createdAt: Date.now(),
+      });
+    } else {
+      existing.client = client;
+      existing.provider = provider;
+      existing.evaluator = evaluator;
+      existing.descriptionCid = descriptionCid;
+      existing.status = relayStatus;
+    }
+
+    const job = jobs.find((j) => j.id === jobId)!;
+    const event: JobEvent = {
+      id: events.length + 1,
+      jobId,
+      type: "job:synced",
+      at: Date.now(),
+      payload: { txHash: "0xsync" },
+    };
+    events.push(event);
+
+    return c.json({ ok: true, job });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "sync_failed";
+    return c.json({ error: "chain_read_failed", message: msg }, 502);
+  }
 });
 
 app.get("/relay/events", (c) => {
@@ -393,24 +487,26 @@ app.post("/relay/events", async (c) => {
 });
 
 app.post("/relay/deliverables", async (c) => {
-  const body = await c.req.json<{
-    jobId: number;
-    ciphertext: string;
-    iv: string;
-    authTag: string;
-    algorithm?: "aes-256-gcm";
-  }>();
+  let body: { jobId?: number; plaintext?: string };
+  try {
+    body = (await c.req.json()) as { jobId?: number; plaintext?: string };
+  } catch {
+    return c.json({ error: "invalid_json" }, 400);
+  }
 
-  if (!Number.isFinite(body.jobId) || body.jobId <= 0) {
+  if (!Number.isFinite(body.jobId) || !body.jobId || body.jobId <= 0) {
     return c.json({ error: "invalid_job_id" }, 400);
+  }
+  if (typeof body.plaintext !== "string") {
+    return c.json({ error: "plaintext_required" }, 400);
+  }
+  if (body.plaintext.length > 500_000) {
+    return c.json({ error: "plaintext_too_long" }, 400);
   }
 
   const record: DeliverableRecord = {
     jobId: body.jobId,
-    ciphertext: body.ciphertext,
-    iv: body.iv,
-    authTag: body.authTag,
-    algorithm: body.algorithm || "aes-256-gcm",
+    plaintext: body.plaintext,
     updatedAt: Date.now(),
   };
   deliverables.set(body.jobId, record);
@@ -427,3 +523,8 @@ app.get("/relay/deliverables/:jobId", (c) => {
 const port = Number(process.env.PORT || 8788);
 serve({ fetch: app.fetch, port });
 console.log(`[clarity-relay] listening on :${port}`);
+console.log(
+  `[clarity-relay] sync-from-chain: ${
+    chainPublicClient ? "enabled" : "disabled (set CLARITY_ESCROW_ADDRESS for sync_job parity)"
+  }`,
+);

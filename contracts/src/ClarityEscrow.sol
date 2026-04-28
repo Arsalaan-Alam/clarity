@@ -149,7 +149,7 @@ contract ClarityEscrow {
 
     function rejectJob(uint256 jobId) external {
         Job storage job = jobs[jobId];
-        if (msg.sender != job.client && msg.sender != job.evaluator) revert Unauthorized();
+        if (msg.sender != job.evaluator) revert Unauthorized();
         if (job.status != JobStatus.Submitted) revert InvalidState();
 
         job.status = JobStatus.Rejected;

@@ -224,6 +224,22 @@ export function ListingDetailMarket({ id }: { id: number }) {
         </section>
       ) : null}
 
+      {listing.status === "onchain" && listing.escrowJobId ? (
+        <section className="rounded-xl border border-teal-500/25 bg-teal-950/30 p-4">
+          <p className="text-sm text-slate-200">
+            This listing is linked to escrow job{" "}
+            <span className="font-mono text-teal-200">#{listing.escrowJobId}</span>. Open the job to
+            submit work, approve, or reject.
+          </p>
+          <Link
+            href={`/jobs/${listing.escrowJobId}`}
+            className="mt-3 inline-block rounded-lg bg-teal-500 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-teal-400"
+          >
+            Open job #{listing.escrowJobId}
+          </Link>
+        </section>
+      ) : null}
+
       {listing.status === "open" && isClient ? (
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
           <button

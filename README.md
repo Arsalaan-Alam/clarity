@@ -2,8 +2,10 @@
 
 Greenfield backend implementation for Clarity:
 - `contracts/` (Foundry): `MockUSDC`, `ClarityEscrow`
-- `relay/` (Hono): job/event APIs + encrypted deliverable storage
-- `mcp/` (TS CLI runner): wallet, job lifecycle, deliverable encryption/decryption
+- `relay/` (Hono): job/event APIs + in-memory **plaintext** deliverable storage (optional `CLARITY_ESCROW_ADDRESS` for sync-from-chain)
+- `mcp/` (TS CLI runner): wallet, job lifecycle, relay `POST` of deliverable text; on-chain `deliverableCid` is `keccak256(utf8(plaintext))`
+
+**Roles (on-chain):** only the **evaluator** may call `completeJob` (approve) or `rejectJob` (reject and refund). The **client** does not approve or reject; they can read the submitted work from the relay as plaintext when the job is in **Submitted** or later. **Redeploy** the escrow contract if you still have bytecode that allowed the client to `rejectJob`.
 
 ## Prerequisites
 
@@ -18,15 +20,15 @@ Create `.env` in the repo root:
 ```bash
 CLARITY_PRIVATE_KEY=0x...                     # client key
 CLARITY_PROVIDER_PRIVATE_KEY=0x...            # provider key
-CLARITY_EVALUATOR_PRIVATE_KEY=0x...           # evaluator key
+CLARITY_EVALUATOR_PRIVATE_KEY=0x...         # evaluator key
 
 CLARITY_RPC_URL=https://sepolia.base.org
 CLARITY_API_URL=http://localhost:8788
-CLARITY_DELIVERABLE_SECRET=change-me-dev-secret
-
 CLARITY_USDC_ADDRESS=0x...
 CLARITY_ESCROW_ADDRESS=0x...
 ```
+
+Use the same `CLARITY_ESCROW_ADDRESS` and `CLARITY_RPC_URL` when running **`relay/`** if you use **Sync relay from chain** or `POST /relay/jobs/:jobId/sync-from-chain` from the web or MCP. No shared secret is required for deliverables.
 
 ## Install
 
@@ -62,12 +64,23 @@ cd relay && PORT=8788 npm run start
 
 ## Start Relay
 
-Use `8788` to avoid local `8787` conflicts:
+Use `8788` to avoid local `8787` conflicts. For **web provider submit** and **submitted work** display, the relay stores deliverable **plaintext** in memory. Set `CLARITY_ESCROW_ADDRESS` (and `CLARITY_RPC_URL` if not default) so `POST /relay/jobs/:jobId/sync-from-chain` can read the escrow `jobs` row:
 
 ```bash
 cd relay
+export CLARITY_RPC_URL=https://sepolia.base.org
+export CLARITY_ESCROW_ADDRESS=0x...   # same as NEXT_PUBLIC_ESCROW_ADDRESS
 PORT=8788 npm run start
 ```
+
+**Relay is in-memory:** if the process restarts, deliverable plaintext may be missing while the chain still shows **Submitted**—re-`POST` the same text to `POST /relay/deliverables` or use MCP `submit_work` with the same relay `CLARITY_API_URL`.
+
+**Relay HTTP (deliverables):**
+
+- `POST /relay/deliverables` — body `{ "jobId": n, "plaintext": "…" }` (max 500k chars). Stores plaintext for `GET /relay/deliverables/:jobId`.
+- `GET /relay/deliverables/:jobId` — returns `{ jobId, plaintext, updatedAt }` or 404.
+- The browser/MCP first sends `submitWork` on-chain with `deliverableCid = keccak256(utf8(plaintext))`, then `POST`s the same string here so the UI and `read_deliverable` can show it.
+- `POST /relay/jobs/:jobId/sync-from-chain` — reads `jobs(jobId)` from the escrow, upserts the in-memory relay job, appends `job:synced` to the timeline (same role as MCP `sync_job`).
 
 ## One-shot backend execution (happy path)
 
@@ -115,16 +128,29 @@ MCP: `create_listing` (prints `ownerToken`), `list_listings`, `bid_listing` (age
 
 ## Recording a screen demo (listing → bid → accept → fund → deliver → payout)
 
-**Prereqs:** Repo root `.env` with three keys (`CLARITY_PRIVATE_KEY` = client, `CLARITY_PROVIDER_PRIVATE_KEY` = agent, `CLARITY_EVALUATOR_PRIVATE_KEY` = checker), `CLARITY_ESCROW_ADDRESS`, `CLARITY_USDC_ADDRESS`, `CLARITY_RPC_URL`, `CLARITY_DELIVERABLE_SECRET`, and **`CLARITY_API_URL=http://localhost:8788`** (must match the relay). Mint mUSDC for client + fund agent/evaluator with gas ETH on Base Sepolia.
+**Prereqs:** Repo root `.env` with three keys (`CLARITY_PRIVATE_KEY` = client, `CLARITY_PROVIDER_PRIVATE_KEY` = agent, `CLARITY_EVALUATOR_PRIVATE_KEY` = checker), `CLARITY_ESCROW_ADDRESS`, `CLARITY_USDC_ADDRESS`, `CLARITY_RPC_URL`, and **`CLARITY_API_URL=http://localhost:8788`** (must match the relay). Mint mUSDC for client + fund agent/evaluator with gas ETH on Base Sepolia.
 
-1. **Relay** — `cd relay && npm run start` (defaults to port **8788**).
-2. **Web** — `cd web && npm run dev`; `NEXT_PUBLIC_RELAY_URL=http://localhost:8788` in `web/.env.local`.
-3. **Client creates listing** (browser: Listings → New, or MCP `create_listing`). **Save `ownerToken`** from the JSON response.
-4. **Agent bids** — Terminal: `cd mcp && npm run start -- bid_listing <id> "Your pitch" --pk "$CLARITY_PROVIDER_PRIVATE_KEY"`.
-5. **Client accepts** — Web listing page, or MCP: `accept_listing <id> <bidId> <evaluatorAddr> --token "$OWNER_TOKEN" --pk "$CLARITY_PRIVATE_KEY"` (evaluator = address from evaluator key).
-6. **Client creates & funds job** — Web **Create** (use link from listing with prefilled addresses); same title/description as listing; complete create → budget → approve + fund.
-7. **Link listing to job** — If you used the web for create from the same browser, linking may run automatically; otherwise MCP: `link_listing <listingId> <escrowJobId> --token "$OWNER_TOKEN" --pk "$CLARITY_PRIVATE_KEY"`.
-8. **Agent submits work** — `npm run start -- submit_work <jobId> "Deliverable text" --pk "$CLARITY_PROVIDER_PRIVATE_KEY"`.
-9. **Evaluator releases payout** — `npm run start -- read_deliverable <jobId>` (optional), then `npm run start -- complete_job <jobId> --pk "$CLARITY_EVALUATOR_PRIVATE_KEY"`.
+**Relay** should have `CLARITY_ESCROW_ADDRESS` (and `CLARITY_RPC_URL` if not default) for **Sync relay from chain** and `sync-from-chain`.
 
-If `submit_work` fails to store the deliverable, `CLARITY_API_URL` does not match the running relay port—fix `.env` and retry.
+### Linear checklist
+
+1. **Relay** — `cd relay && npm run start` (port **8788**); export `CLARITY_ESCROW_ADDRESS` as above.
+2. **Web** — `cd web && npm run dev`; `web/.env.local`: `NEXT_PUBLIC_RELAY_URL=http://localhost:8788`, escrow + USDC addresses.
+3. **Client creates listing** — Listings → New (same browser session keeps `ownerToken`), or MCP `create_listing` (save `ownerToken` from JSON).
+4. **Agent bids** — Web (second wallet on Base Sepolia) or MCP: `bid_listing <id> "pitch" --pk "$CLARITY_PROVIDER_PRIVATE_KEY"`.
+5. **Client accepts** — Web listing page (evaluator field + **Accept this bid**), or MCP `accept_listing … --token …`.
+6. **Client creates & funds job** — Web **Create** from listing link; create → set budget → approve + fund. If listing link fails, use **Retry link** on the create page or MCP `link_listing`.
+7. **Listing on-chain** — Open listing again: **Open job #n** when status is `onchain`.
+8. **Provider submits** — **Web:** `/jobs/<id>` as provider — **Submit work** (keccak of UTF-8 text on-chain, then `POST` plaintext to the relay). **Or MCP:** `submit_work <jobId> "text" --pk "$CLARITY_PROVIDER_PRIVATE_KEY"`.
+9. **Evaluator checks** — **Web:** same job page — read **Submitted work** (plaintext), then **Approve and release payment**. **Or MCP:** `read_deliverable <jobId>` then `complete_job <jobId> --pk "$CLARITY_EVALUATOR_PRIVATE_KEY"`.
+10. **Edges** — While **Submitted**: only the **evaluator** can **Reject and refund client** on the job page or via MCP `reject_job` (evaluator key). If **Funded** but provider never submits and `expiresAt` has passed: client **Claim refund** on the job page or MCP `claim_refund <jobId> --pk "$CLARITY_PRIVATE_KEY"`.
+
+| Step | Web | MCP |
+|------|-----|-----|
+| Submit work | Job page (provider): tx + `POST /relay/deliverables` | `submit_work` |
+| Read submitted work | Job page: **Submitted work** (all connected wallets see plaintext) | `read_deliverable` |
+| Release escrow | Job page: **Approve** (evaluator) | `complete_job` (evaluator `--pk`) |
+| Reject | Job page: **Reject** (evaluator only) | `reject_job` (evaluator `--pk`) |
+| Refund after expiry (Funded) | Job page: **Claim refund** (client) | `claim_refund` |
+
+If `submit_work` or web submit shows on-chain **Submitted** but the relay has no text, `CLARITY_API_URL` / `NEXT_PUBLIC_RELAY_URL` may not match the running relay, or the relay was restarted—fix env and re-`POST` the plaintext to `/relay/deliverables` (same string as used for the hash).

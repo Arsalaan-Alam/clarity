@@ -8,6 +8,7 @@
     "start": "tsx src/index.ts"
   },
   "dependencies": {
+    "dotenv": "^16.4.5",
     "viem": "^2.21.54",
     "zod": "^3.23.8"
   },

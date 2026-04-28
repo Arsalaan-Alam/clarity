@@ -50,6 +50,20 @@ export const clarityEscrowAbi = [
   },
   {
     type: "function",
+    name: "rejectJob",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "jobId", type: "uint256" }],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "claimRefund",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "jobId", type: "uint256" }],
+    outputs: [],
+  },
+  {
+    type: "function",
     name: "jobs",
     stateMutability: "view",
     inputs: [{ name: "jobId", type: "uint256" }],

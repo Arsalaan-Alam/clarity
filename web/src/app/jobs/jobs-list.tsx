@@ -21,6 +21,8 @@ export function JobsList() {
   const { data: jobs, isPending, error } = useQuery({
     queryKey: ["escrowJobList", escrow],
     enabled: Boolean(escrow && publicClient),
+    refetchInterval: 12_000,
+    refetchOnWindowFocus: true,
     queryFn: async (): Promise<ListedJob[]> => {
       if (!escrow || !publicClient) return [];
 

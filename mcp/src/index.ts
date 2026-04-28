@@ -1,8 +1,8 @@
-import { type Address } from "viem";
+import "./load-env.js";
+import { type Address, keccak256, stringToBytes } from "viem";
 import {
   BASE_SEPOLIA_CHAIN_ID,
   CLARITY_API_URL,
-  CLARITY_DELIVERABLE_SECRET,
   CLARITY_PRIVATE_KEY,
   ESCROW_ADDRESS,
   USDC_ADDRESS,
@@ -21,7 +21,6 @@ import {
   relayListListings,
   relayPostBid,
 } from "./relay.js";
-import { decryptDeliverable, encryptDeliverable } from "./encryption.js";
 
 const COMMANDS = [
   "setup_wallet",
@@ -32,6 +31,7 @@ const COMMANDS = [
   "submit_work",
   "complete_job",
   "reject_job",
+  "claim_refund",
   "get_job",
   "read_deliverable",
   "sync_job",
@@ -421,8 +421,7 @@ async function submitWork(jobIdArg: string, deliverableArg: string, privateKey?:
   const account = getAccount(privateKey);
   const escrowAddress = requireAddress(ESCROW_ADDRESS, "CLARITY_ESCROW_ADDRESS");
   const jobId = BigInt(jobIdArg);
-  const encrypted = await encryptDeliverable(deliverableArg, CLARITY_DELIVERABLE_SECRET);
-  const deliverableCid = toBytes32(`enc:${encrypted.ciphertext.slice(0, 20)}`);
+  const deliverableCid = keccak256(stringToBytes(deliverableArg));
 
   const hash = await wallet.writeContract({
     address: escrowAddress,
@@ -434,16 +433,21 @@ async function submitWork(jobIdArg: string, deliverableArg: string, privateKey?:
   });
   await publicClient.waitForTransactionReceipt({ hash });
 
-  const deliverableStoreRes = await fetch(`${CLARITY_API_URL}/relay/deliverables`, {
+  const deliverableUrl = `${CLARITY_API_URL}/relay/deliverables`;
+  const deliverableStoreRes = await fetch(deliverableUrl, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
       jobId: Number(jobId),
-      ...encrypted,
+      plaintext: deliverableArg,
     }),
   });
   if (!deliverableStoreRes.ok) {
-    throw new Error(`Failed to store encrypted deliverable: ${deliverableStoreRes.status}`);
+    const body = await deliverableStoreRes.text();
+    throw new Error(
+      `Failed to store deliverable: HTTP ${deliverableStoreRes.status} ${body}. ` +
+        `POST ${deliverableUrl} — start the relay (default port 8788) and set CLARITY_API_URL in .env to match (404 usually means wrong port or not the Clarity relay).`,
+    );
   }
 
   const job = await getJob(jobId);
@@ -530,6 +534,39 @@ async function rejectJob(jobIdArg: string, privateKey?: string) {
   console.log(JSON.stringify({ ok: true, jobId: jobId.toString(), txHash: hash }, null, 2));
 }
 
+async function claimRefund(jobIdArg: string, privateKey?: string) {
+  const wallet = getWalletClient(privateKey);
+  const account = getAccount(privateKey);
+  const escrowAddress = requireAddress(ESCROW_ADDRESS, "CLARITY_ESCROW_ADDRESS");
+  const jobId = BigInt(jobIdArg);
+  const hash = await wallet.writeContract({
+    address: escrowAddress,
+    abi: clarityEscrowAbi,
+    functionName: "claimRefund",
+    args: [jobId],
+    account,
+    chain: wallet.chain,
+  });
+  await publicClient.waitForTransactionReceipt({ hash });
+
+  const job = await getJob(jobId);
+  await postRelayEvent({
+    jobId: Number(jobId),
+    eventType: "job:refunded",
+    status: statusFromIndex(job.status),
+    txHash: hash,
+    job: {
+      chainId: BASE_SEPOLIA_CHAIN_ID,
+      escrow: escrowAddress,
+      client: job.client,
+      provider: job.provider,
+      evaluator: job.evaluator,
+      descriptionCid: job.descriptionCid,
+    },
+  });
+  console.log(JSON.stringify({ ok: true, jobId: jobId.toString(), txHash: hash }, null, 2));
+}
+
 async function printJob(jobIdArg: string) {
   const job = await getJob(BigInt(jobIdArg));
   const payload = {
@@ -549,14 +586,8 @@ async function readDeliverable(jobIdArg: string) {
   if (!res.ok) {
     throw new Error(`Failed to fetch deliverable: ${res.status}`);
   }
-  const payload = (await res.json()) as {
-    ciphertext: string;
-    iv: string;
-    authTag: string;
-    algorithm: "aes-256-gcm";
-  };
-  const plaintext = await decryptDeliverable(payload, CLARITY_DELIVERABLE_SECRET);
-  console.log(JSON.stringify({ jobId, plaintext }, null, 2));
+  const payload = (await res.json()) as { plaintext?: string };
+  console.log(JSON.stringify({ jobId, plaintext: payload.plaintext ?? "" }, null, 2));
 }
 
 async function listJobs() {
@@ -761,12 +792,22 @@ async function main() {
       await submitWork(toolArgs[0], toolArgs[1], privateKey);
       return;
     case "complete_job":
-      if (toolArgs.length < 1) throw new Error("Usage: complete_job <jobId> [--pk <privateKey>]");
+      if (toolArgs.length < 1) {
+        throw new Error("Usage: complete_job <jobId> [--pk <privateKey>]  (evaluator wallet only)");
+      }
       await completeJob(toolArgs[0], privateKey);
       return;
     case "reject_job":
-      if (toolArgs.length < 1) throw new Error("Usage: reject_job <jobId> [--pk <privateKey>]");
+      if (toolArgs.length < 1) {
+        throw new Error("Usage: reject_job <jobId> [--pk <privateKey>]  (evaluator wallet only; refunds client)");
+      }
       await rejectJob(toolArgs[0], privateKey);
+      return;
+    case "claim_refund":
+      if (toolArgs.length < 1) {
+        throw new Error("Usage: claim_refund <jobId> [--pk <privateKey>]  (client, Funded, after expiresAt)");
+      }
+      await claimRefund(toolArgs[0], privateKey);
       return;
     case "get_job":
       if (toolArgs.length < 1) throw new Error("Usage: get_job <jobId>");

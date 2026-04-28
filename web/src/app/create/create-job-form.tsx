@@ -10,7 +10,7 @@ import {
   useReadContract,
   useWriteContract,
 } from "wagmi";
-import { isAddress, parseUnits } from "viem";
+import { formatUnits, isAddress, parseUnits } from "viem";
 import { clarityEscrowAbi, usdcAbi } from "@/lib/abi";
 import { getEscrowAddress, getUsdcAddress } from "@/lib/env";
 import {
@@ -22,12 +22,18 @@ import {
   fetchListingDetail,
   getStoredListingOwnerToken,
   linkListingToEscrow,
+  type MarketListing,
 } from "@/lib/listings";
+import { onChainStatusLabel } from "@/lib/status";
 
 type Step = "form" | "budget" | "done";
 
 /** Explicit gas avoids flaky `eth_estimateGas` on some Base Sepolia RPCs. */
 const TX_GAS = 500_000n;
+
+function isBytes32Hex(v: string): v is `0x${string}` {
+  return /^0x[0-9a-fA-F]{64}$/.test(v);
+}
 
 export function CreateJobForm() {
   const searchParams = useSearchParams();
@@ -47,6 +53,11 @@ export function CreateJobForm() {
   const [step, setStep] = useState<Step>("form");
   const [jobId, setJobId] = useState<bigint | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [listingLinkError, setListingLinkError] = useState<string | null>(null);
+  const [listingLinkBusy, setListingLinkBusy] = useState(false);
+  /** When set, `createJob` uses this listing’s `contentHash` (same bytes32 as the marketplace row). */
+  const [listingSource, setListingSource] = useState<MarketListing | null>(null);
+  const [listingLoadErr, setListingLoadErr] = useState<string | null>(null);
 
   const { writeContractAsync, isPending: isWriting } = useWriteContract();
 
@@ -56,15 +67,22 @@ export function CreateJobForm() {
     if (p && isAddress(p)) setProvider(p);
     if (e && isAddress(e)) setEvaluator(e);
     const lid = searchParams.get("listingId");
-    if (!lid || Number.isNaN(Number(lid))) return;
+    if (!lid || Number.isNaN(Number(lid))) {
+      setListingSource(null);
+      setListingLoadErr(null);
+      return;
+    }
+    setListingLoadErr(null);
     void fetchListingDetail(Number(lid))
       .then(({ listing }) => {
+        setListingSource(listing);
         setTitle(listing.title);
         setLongDescription(listing.description);
         setTagsCsv(listing.tags.join(", "));
       })
       .catch(() => {
-        /* ignore */
+        setListingSource(null);
+        setListingLoadErr("Could not load listing — check NEXT_PUBLIC_RELAY_URL.");
       });
   }, [searchParams]);
 
@@ -72,9 +90,18 @@ export function CreateJobForm() {
     address: escrow ?? "0x0000000000000000000000000000000000000000",
     abi: clarityEscrowAbi,
     functionName: "jobs",
-    args: jobId != null ? [jobId] : [0n],
-    query: { enabled: jobId != null && !!escrow && jobId > 0n },
+    args: [jobId ?? 0n],
+    query: {
+      enabled: jobId != null && !!escrow && jobId > 0n,
+      refetchInterval: step === "budget" && jobId != null ? 8_000 : false,
+    },
   });
+
+  useEffect(() => {
+    if (step === "budget" && jobId != null) {
+      void refetchJob();
+    }
+  }, [step, jobId, refetchJob]);
 
   if (!escrow || !usdc) {
     return (
@@ -102,6 +129,19 @@ export function CreateJobForm() {
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
     setMessage(null);
+    setListingLinkError(null);
+    const lid =
+      listingIdParam && !Number.isNaN(Number(listingIdParam)) ? Number(listingIdParam) : null;
+    if (lid != null && !listingSource) {
+      setMessage(
+        listingLoadErr ?? "Listing is still loading or failed to load — cannot match metadata hash.",
+      );
+      return;
+    }
+    if (listingSource && lid != null && listingSource.id !== lid) {
+      setMessage("Listing mismatch — refresh the page.");
+      return;
+    }
     if (!isAddress(provider) || !isAddress(evaluator)) {
       setMessage("Invalid provider or evaluator address.");
       return;
@@ -121,23 +161,31 @@ export function CreateJobForm() {
       return;
     }
     let desc: `0x${string}`;
-    try {
-      const registered = await registerJobMetadata({
-        title: title.trim(),
-        description: longDescription.trim(),
-        tags: tagsCsv
-          .split(",")
-          .map((t) => t.trim())
-          .filter(Boolean),
-      });
-      desc = registered.contentHash;
-    } catch (e) {
-      setMessage(
-        e instanceof Error
-          ? e.message
-          : "Could not pin metadata — is the relay running and NEXT_PUBLIC_RELAY_URL set?",
-      );
-      return;
+    if (listingSource && lid != null) {
+      if (!isBytes32Hex(listingSource.contentHash)) {
+        setMessage("This listing’s contentHash from the relay is not a valid bytes32.");
+        return;
+      }
+      desc = listingSource.contentHash;
+    } else {
+      try {
+        const registered = await registerJobMetadata({
+          title: title.trim(),
+          description: longDescription.trim(),
+          tags: tagsCsv
+            .split(",")
+            .map((t) => t.trim())
+            .filter(Boolean),
+        });
+        desc = registered.contentHash;
+      } catch (e) {
+        setMessage(
+          e instanceof Error
+            ? e.message
+            : "Could not pin metadata — is the relay running and NEXT_PUBLIC_RELAY_URL set?",
+        );
+        return;
+      }
     }
     const hash = await writeContractAsync({
       address: escrow,
@@ -181,12 +229,14 @@ export function CreateJobForm() {
           provider,
           evaluator,
           descriptionCid: desc,
-          title: title.trim(),
-          description: longDescription.trim(),
-          tags: tagsCsv
-            .split(",")
-            .map((t) => t.trim())
-            .filter(Boolean),
+          title: (listingSource?.title ?? title).trim(),
+          description: (listingSource?.description ?? longDescription).trim(),
+          tags:
+            listingSource?.tags ??
+            tagsCsv
+              .split(",")
+              .map((t) => t.trim())
+              .filter(Boolean),
         },
       });
       if (clientFromChain.toLowerCase() === address.toLowerCase()) {
@@ -197,19 +247,28 @@ export function CreateJobForm() {
         !Number.isNaN(Number(listingIdParam)) &&
         clientFromChain.toLowerCase() === address.toLowerCase()
       ) {
-        try {
-          const lid = Number(listingIdParam);
-          const ownerToken = getStoredListingOwnerToken(lid);
-          if (ownerToken) {
+        const lid = Number(listingIdParam);
+        const ownerToken = getStoredListingOwnerToken(lid);
+        if (ownerToken) {
+          try {
             await linkListingToEscrow({
               listingId: lid,
               client: clientFromChain,
               escrowJobId: Number(count),
               ownerToken,
             });
+            setListingLinkError(null);
+          } catch (linkErr) {
+            setListingLinkError(
+              linkErr instanceof Error
+                ? linkErr.message
+                : "Could not link listing to this job id.",
+            );
           }
-        } catch {
-          /* optional */
+        } else {
+          setListingLinkError(
+            "No listing owner key in this browser — the job is on-chain but the listing was not linked. Create the listing from this site or run MCP link_listing with --token.",
+          );
         }
       }
     } catch (relayErr) {
@@ -246,7 +305,13 @@ export function CreateJobForm() {
       return;
     }
     if (status !== 0) {
-      setMessage("Job is not Open anymore (budget may already be set or state changed).");
+      const label = onChainStatusLabel(status);
+      setMessage(
+        `On-chain status is “${label}” (${status}), not open — set budget only works in the “open” state. ` +
+          (status === 1
+            ? "This job is already funded. Use the link below to open it (or finish approve + fund from there if your wallet is mid-flow)."
+            : "Open the job page to see next steps, or start a new job from the listing if this one is done."),
+      );
       return;
     }
     if (BigInt(Math.floor(Date.now() / 1000)) > expiresAt) {
@@ -295,11 +360,38 @@ export function CreateJobForm() {
 
   const runFund = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (jobId == null || !address) return;
+    if (jobId == null || !address || !publicClient) return;
     setMessage(null);
+    const row = await publicClient.readContract({
+      address: escrow,
+      abi: clarityEscrowAbi,
+      functionName: "jobs",
+      args: [jobId],
+    });
+    const r = row as readonly unknown[];
+    const budgetOnChain = r[3] as bigint;
+    const fundStatus = Number(r[7]);
+    if (fundStatus === 1) {
+      setMessage(
+        `Job #${jobId.toString()} is already funded on-chain. Continue on the job page.`,
+      );
+      return;
+    }
+    if (fundStatus !== 0) {
+      setMessage(
+        `Can’t fund while status is “${onChainStatusLabel(fundStatus)}”. Open /jobs/${jobId.toString()} for details.`,
+      );
+      return;
+    }
+    if (budgetOnChain === 0n) {
+      setMessage("Set budget on-chain first (step 2).");
+      return;
+    }
     const amount = parseUnits(budget, 6);
-    if (onchainJob && Array.isArray(onchainJob) && (onchainJob[3] as bigint) === 0n) {
-      setMessage("Set budget on-chain first.");
+    if (amount !== budgetOnChain) {
+      setMessage(
+        `Wallet form shows ${formatUnits(amount, 6)} mUSDC but on-chain budget is ${formatUnits(budgetOnChain, 6)} mUSDC — match the budget field to what you set in step 2.`,
+      );
       return;
     }
     const h1 = await writeContractAsync({
@@ -353,14 +445,64 @@ export function CreateJobForm() {
     setMessage("Funded.");
   };
 
+  const retryListingLink = async () => {
+    if (!listingIdParam || jobId == null || !publicClient || !escrow) return;
+    const lid = Number(listingIdParam);
+    const ownerToken = getStoredListingOwnerToken(lid);
+    if (!ownerToken) {
+      setListingLinkError("Missing owner token in this browser.");
+      return;
+    }
+    setListingLinkBusy(true);
+    try {
+      const row = await publicClient.readContract({
+        address: escrow,
+        abi: clarityEscrowAbi,
+        functionName: "jobs",
+        args: [jobId],
+      });
+      const clientFromChain = String((row as readonly unknown[])[0]);
+      await linkListingToEscrow({
+        listingId: lid,
+        client: clientFromChain,
+        escrowJobId: Number(jobId),
+        ownerToken,
+      });
+      setListingLinkError(null);
+      setMessage((prev) => (prev ? `${prev} Listing linked to #${lid}.` : `Listing #${lid} linked.`));
+    } catch (e) {
+      setListingLinkError(e instanceof Error ? e.message : "Link failed");
+    } finally {
+      setListingLinkBusy(false);
+    }
+  };
+
+  const chainStatusIdx =
+    onchainJob && Array.isArray(onchainJob) && jobId != null ? Number((onchainJob as readonly unknown[])[7]) : -1;
+  const chainBudgetWei =
+    onchainJob && Array.isArray(onchainJob) && jobId != null ? ((onchainJob as readonly unknown[])[3] as bigint) : 0n;
+  const canSetBudget = chainStatusIdx === 0;
+  const canFund = chainStatusIdx === 0 && chainBudgetWei > 0n;
+  const listingFromUrl = Boolean(listingIdParam && !Number.isNaN(Number(listingIdParam)));
+  const listingStillLoading = listingFromUrl && !listingSource && !listingLoadErr;
+
   return (
     <div className="cl-card-strong mx-auto max-w-md space-y-6 rounded-xl p-6">
-      {listingIdParam ? (
-        <p className="rounded-md border border-amber-500/25 bg-amber-950/40 px-3 py-2 text-xs text-amber-100">
-          You came from <span className="font-mono">listing #{listingIdParam}</span>. Keep{" "}
-          <strong>title, description, and tags</strong> exactly as on the listing so the metadata
-          hash matches <span className="font-mono">bytes32</span> on-chain.
+      {listingSource ? (
+        <p className="rounded-md border border-teal-500/25 bg-teal-950/35 px-3 py-2 text-xs leading-relaxed text-teal-100">
+          Listing <span className="font-mono">#{listingSource.id}</span>: title, description, and tags are
+          loaded from the relay and the on-chain <span className="font-mono">bytes32</span> is this
+          listing&apos;s <span className="font-mono">contentHash</span> (no manual copy-paste).
         </p>
+      ) : null}
+      {listingLoadErr ? (
+        <p className="rounded-md border border-amber-500/25 bg-amber-950/40 px-3 py-2 text-xs text-amber-100">
+          {listingLoadErr} You can still create a job without a listing hash by removing{" "}
+          <span className="font-mono">listingId</span> from the URL.
+        </p>
+      ) : null}
+      {listingStillLoading ? (
+        <p className="text-sm text-slate-500">Loading listing metadata…</p>
       ) : null}
       {step === "form" && (
         <form onSubmit={handleCreate} className="space-y-4">
@@ -395,32 +537,41 @@ export function CreateJobForm() {
             />
           </div>
           <div>
-            <label className="text-xs text-slate-500">Title</label>
+            <label className="text-xs text-slate-500">
+              Title{listingSource ? " (from listing)" : ""}
+            </label>
             <input
-              className="mt-1 w-full rounded-md border border-white/10 bg-slate-900/60 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-600"
+              className="mt-1 w-full rounded-md border border-white/10 bg-slate-900/60 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-600 read-only:cursor-not-allowed read-only:opacity-90"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               placeholder="Short headline"
               required
+              readOnly={!!listingSource}
             />
           </div>
           <div>
-            <label className="text-xs text-slate-500">Description</label>
+            <label className="text-xs text-slate-500">
+              Description{listingSource ? " (from listing)" : ""}
+            </label>
             <textarea
-              className="mt-1 min-h-[120px] w-full rounded-md border border-white/10 bg-slate-900/60 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-600"
+              className="mt-1 min-h-[120px] w-full rounded-md border border-white/10 bg-slate-900/60 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-600 read-only:cursor-not-allowed read-only:opacity-90"
               value={longDescription}
               onChange={(e) => setLongDescription(e.target.value)}
               placeholder="Scope, acceptance criteria, links…"
               required
+              readOnly={!!listingSource}
             />
           </div>
           <div>
-            <label className="text-xs text-slate-500">Tags (optional, comma-separated)</label>
+            <label className="text-xs text-slate-500">
+              Tags (optional, comma-separated){listingSource ? " (from listing)" : ""}
+            </label>
             <input
-              className="mt-1 w-full rounded-md border border-white/10 bg-slate-900/60 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-600"
+              className="mt-1 w-full rounded-md border border-white/10 bg-slate-900/60 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-600 read-only:cursor-not-allowed read-only:opacity-90"
               value={tagsCsv}
               onChange={(e) => setTagsCsv(e.target.value)}
               placeholder="solidity, design"
+              readOnly={!!listingSource}
             />
           </div>
           <p className="text-xs text-slate-500">
@@ -433,7 +584,7 @@ export function CreateJobForm() {
           </p>
           <button
             type="submit"
-            disabled={isWriting}
+            disabled={isWriting || listingStillLoading}
             className="w-full rounded-md bg-teal-500 py-2 text-sm font-semibold text-slate-950 hover:bg-teal-400 disabled:opacity-50"
           >
             {isWriting ? "Submitting…" : "1. Create on-chain job"}
@@ -444,6 +595,24 @@ export function CreateJobForm() {
       {step === "budget" && jobId != null && (
         <div className="space-y-4">
           <div className="space-y-2 text-sm text-slate-300">
+            {chainStatusIdx >= 0 ? (
+              <p className="rounded-md border border-white/10 bg-slate-950/50 px-3 py-2 text-xs leading-relaxed text-slate-300">
+                <span className="text-slate-500">Live on-chain</span> · status{" "}
+                <span className="font-mono text-teal-200/90">{onChainStatusLabel(chainStatusIdx)}</span>
+                {chainBudgetWei > 0n ? (
+                  <>
+                    {" "}
+                    · budget <span className="font-mono">{formatUnits(chainBudgetWei, 6)}</span> mUSDC
+                  </>
+                ) : null}
+              </p>
+            ) : null}
+            {chainStatusIdx === 1 ? (
+              <p className="text-xs leading-relaxed text-amber-200/90">
+                This job is already <strong className="text-amber-100">funded</strong>. Step 2 only
+                applies before funding. Continue on the job page.
+              </p>
+            ) : null}
             <p>
               Job id: <span className="font-mono">{jobId.toString()}</span>
             </p>
@@ -483,7 +652,7 @@ export function CreateJobForm() {
             </div>
             <button
               type="submit"
-              disabled={isWriting}
+              disabled={isWriting || !canSetBudget}
               className="w-full rounded-md border border-white/15 py-2 text-sm font-medium text-slate-200 hover:bg-white/5 disabled:opacity-50"
             >
               2. Set budget
@@ -492,12 +661,20 @@ export function CreateJobForm() {
           <form onSubmit={runFund} className="space-y-2">
             <button
               type="submit"
-              disabled={isWriting}
+              disabled={isWriting || !canFund}
               className="w-full rounded-md bg-teal-500 py-2 text-sm font-semibold text-slate-950 hover:bg-teal-400 disabled:opacity-50"
             >
               3. Approve + fund
             </button>
           </form>
+          {chainStatusIdx === 1 ? (
+            <Link
+              href={`/jobs/${jobId.toString()}`}
+              className="inline-block text-sm font-medium text-teal-400 hover:text-teal-300 hover:underline"
+            >
+              Open job #{jobId.toString()}
+            </Link>
+          ) : null}
         </div>
       )}
 
@@ -516,6 +693,23 @@ export function CreateJobForm() {
       {message && step !== "done" && (
         <p className="text-sm text-slate-300">{message}</p>
       )}
+
+      {listingLinkError ? (
+        <div className="rounded-md border border-amber-500/30 bg-amber-950/40 p-3 text-xs text-amber-100">
+          <p className="font-semibold text-amber-200">Listing ↔ escrow</p>
+          <p className="mt-1 leading-relaxed">{listingLinkError}</p>
+          {listingIdParam && jobId != null ? (
+            <button
+              type="button"
+              disabled={listingLinkBusy}
+              onClick={() => void retryListingLink()}
+              className="mt-2 rounded-md border border-amber-400/40 px-3 py-1.5 text-xs font-medium text-amber-100 hover:bg-amber-900/50 disabled:opacity-50"
+            >
+              {listingLinkBusy ? "Retrying…" : `Retry link to listing #${listingIdParam}`}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }
