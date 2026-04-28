@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useLayoutEffect, useState } from "react";
 import Link from "next/link";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { baseSepolia } from "wagmi/chains";
 import {
   useConnection,
@@ -30,6 +32,48 @@ const card = "cl-card-strong rounded-xl p-4";
 
 type TxKind = "submit" | "complete" | "reject" | "refund" | null;
 const TX_GAS = 500_000n;
+
+function MarkdownPreview({ value }: { value: string }) {
+  return (
+    <div className="max-h-80 overflow-auto rounded-md border border-white/10 bg-slate-950/80 p-3 text-sm text-slate-200">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          h1: (props) => <h1 className="mb-2 text-lg font-semibold text-white" {...props} />,
+          h2: (props) => <h2 className="mb-2 text-base font-semibold text-white" {...props} />,
+          h3: (props) => <h3 className="mb-1 text-sm font-semibold text-white" {...props} />,
+          p: (props) => <p className="mb-2 leading-relaxed text-slate-200 last:mb-0" {...props} />,
+          ul: (props) => <ul className="mb-2 list-disc space-y-1 pl-5 last:mb-0" {...props} />,
+          ol: (props) => <ol className="mb-2 list-decimal space-y-1 pl-5 last:mb-0" {...props} />,
+          li: (props) => <li className="text-slate-200" {...props} />,
+          code: ({ className, ...props }) => (
+            <code
+              className={`rounded bg-black/40 px-1 py-0.5 font-mono text-xs text-teal-200 ${className ?? ""}`}
+              {...props}
+            />
+          ),
+          pre: (props) => (
+            <pre
+              className="mb-2 overflow-auto rounded bg-black/50 p-2 font-mono text-xs text-slate-200 last:mb-0"
+              {...props}
+            />
+          ),
+          blockquote: (props) => (
+            <blockquote
+              className="mb-2 border-l-2 border-white/20 pl-3 italic text-slate-300 last:mb-0"
+              {...props}
+            />
+          ),
+          a: (props) => (
+            <a className="text-teal-300 underline hover:text-teal-200" target="_blank" rel="noreferrer" {...props} />
+          ),
+        }}
+      >
+        {value}
+      </ReactMarkdown>
+    </div>
+  );
+}
 
 function ExplorerTx({ hash }: { hash: string }) {
   if (hash === "0xsync") {
@@ -70,6 +114,8 @@ export function JobDetail({ id: idStr }: { id: string }) {
   const [deliverableText, setDeliverableText] = useState<string | null>(null);
   const [deliverableLoadErr, setDeliverableLoadErr] = useState<string | null>(null);
   const [deliverableLoading, setDeliverableLoading] = useState(false);
+  const [submitView, setSubmitView] = useState<"write" | "preview">("write");
+  const [submittedView, setSubmittedView] = useState<"preview" | "raw">("preview");
   const [syncBusy, setSyncBusy] = useState(false);
   const [refreshBusy, setRefreshBusy] = useState(false);
   const [txKind, setTxKind] = useState<TxKind>(null);
@@ -541,16 +587,46 @@ npm run start -- sync_job ${jobId}`}
 
       {statusIdx >= 2 ? (
         <section className={`${card} space-y-2`}>
-          <h2 className="text-xs font-medium uppercase tracking-wider text-slate-500">Submitted work</h2>
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="text-xs font-medium uppercase tracking-wider text-slate-500">Submitted work</h2>
+            <div className="rounded-md border border-white/10 p-0.5">
+              <button
+                type="button"
+                onClick={() => setSubmittedView("preview")}
+                className={`rounded px-2 py-1 text-xs ${
+                  submittedView === "preview"
+                    ? "bg-white/15 text-slate-100"
+                    : "text-slate-400 hover:text-slate-200"
+                }`}
+              >
+                Preview
+              </button>
+              <button
+                type="button"
+                onClick={() => setSubmittedView("raw")}
+                className={`rounded px-2 py-1 text-xs ${
+                  submittedView === "raw"
+                    ? "bg-white/15 text-slate-100"
+                    : "text-slate-400 hover:text-slate-200"
+                }`}
+              >
+                Raw
+              </button>
+            </div>
+          </div>
           {deliverableLoadErr ? (
             <p className="text-sm text-amber-200/90">{deliverableLoadErr}</p>
           ) : null}
           {deliverableLoading ? (
             <LoadingBlock label="Loading submitted work…" />
           ) : deliverableText != null ? (
-            <pre className="max-h-80 overflow-auto whitespace-pre-wrap rounded-md border border-white/10 bg-slate-950/80 p-3 text-sm text-slate-200">
-              {deliverableText}
-            </pre>
+            submittedView === "preview" ? (
+              <MarkdownPreview value={deliverableText} />
+            ) : (
+              <pre className="max-h-80 overflow-auto whitespace-pre-wrap rounded-md border border-white/10 bg-slate-950/80 p-3 text-sm text-slate-200">
+                {deliverableText}
+              </pre>
+            )
           ) : (
             <p className="text-sm text-slate-500">
               No copy on the relay for this job id (relay may have restarted, or the provider did not
@@ -563,19 +639,49 @@ npm run start -- sync_job ${jobId}`}
 
       {showActions && statusIdx === 1 && isProvider ? (
         <section className={`${card} space-y-3`}>
-          <h2 className="text-xs font-medium uppercase tracking-wider text-slate-500">
-            Provider · submit work
-          </h2>
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="text-xs font-medium uppercase tracking-wider text-slate-500">
+              Provider · submit work
+            </h2>
+            <div className="rounded-md border border-white/10 p-0.5">
+              <button
+                type="button"
+                onClick={() => setSubmitView("write")}
+                className={`rounded px-2 py-1 text-xs ${
+                  submitView === "write"
+                    ? "bg-white/15 text-slate-100"
+                    : "text-slate-400 hover:text-slate-200"
+                }`}
+              >
+                Write
+              </button>
+              <button
+                type="button"
+                onClick={() => setSubmitView("preview")}
+                className={`rounded px-2 py-1 text-xs ${
+                  submitView === "preview"
+                    ? "bg-white/15 text-slate-100"
+                    : "text-slate-400 hover:text-slate-200"
+                }`}
+              >
+                Preview
+              </button>
+            </div>
+          </div>
           <p className="text-xs text-slate-500">
             Same text is stored on the relay (plaintext) and referenced on-chain as{" "}
             <code className="font-mono text-slate-400">keccak256(utf8)</code> of the message.
           </p>
-          <textarea
-            className="min-h-[120px] w-full rounded-md border border-white/10 bg-slate-900/60 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-600"
-            placeholder="Deliverable (markdown or plain text)…"
-            value={submitText}
-            onChange={(e) => setSubmitText(e.target.value)}
-          />
+          {submitView === "write" ? (
+            <textarea
+              className="min-h-[120px] w-full rounded-md border border-white/10 bg-slate-900/60 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-600"
+              placeholder="Deliverable (markdown or plain text)…"
+              value={submitText}
+              onChange={(e) => setSubmitText(e.target.value)}
+            />
+          ) : (
+            <MarkdownPreview value={submitText || "_Nothing to preview yet._"} />
+          )}
           <button
             type="button"
             disabled={txBusy}

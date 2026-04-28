@@ -19,6 +19,8 @@
     "porto": "^0.2.35",
     "react": "19.1.0",
     "react-dom": "19.1.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
     "viem": "^2.48.4",
     "wagmi": "^3.6.5"
   },
