@@ -148,6 +148,31 @@ export async function fetchRelayJobDetail(
   return (await res.json()) as { job: RelayJob; timeline: RelayEvent[] };
 }
 
+/** Title for job list: relay job row if present, else metadata registered on the relay for `descriptionCid`. */
+export async function fetchJobTitleForList(
+  jobId: number,
+  descriptionCid: string,
+): Promise<string | null> {
+  try {
+    const detail = await fetchRelayJobDetail(jobId);
+    const t = detail?.job?.title?.trim();
+    if (t) return t;
+  } catch {
+    /* no relay or network error */
+  }
+  if (!/^0x[a-fA-F0-9]{64}$/i.test(descriptionCid)) return null;
+  try {
+    const res = await fetch(
+      `${base()}/relay/metadata?hash=${encodeURIComponent(descriptionCid)}`,
+    );
+    if (!res.ok) return null;
+    const data = (await res.json()) as { title?: string };
+    return data.title?.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
 /** Must match MCP `submit_work` and `keccak256(stringToBytes(plaintext))` for `submitWork`’s `deliverableCid`. */
 export function deliverableCidFromPlaintext(plaintext: string): Hex {
   return keccak256(stringToBytes(plaintext));

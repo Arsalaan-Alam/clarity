@@ -1,5 +1,6 @@
 import { Suspense } from "react";
 import Link from "next/link";
+import { LoadingBlock } from "@/components/spinner";
 import { CreateJobForm } from "./create-job-form";
 
 export default function CreatePage() {
@@ -29,7 +30,7 @@ export default function CreatePage() {
           instead, then return here after you accept a bid (we can prefill from the listing).
         </p>
       </div>
-      <Suspense fallback={<p className="text-sm text-slate-500">Loading…</p>}>
+      <Suspense fallback={<LoadingBlock label="Loading form…" />}>
         <CreateJobForm />
       </Suspense>
     </div>

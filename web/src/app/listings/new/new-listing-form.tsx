@@ -7,6 +7,7 @@ import { baseSepolia } from "wagmi/chains";
 import { useConnection } from "wagmi";
 import { createListing, persistListingOwnerToken } from "@/lib/listings";
 import { registerJobMetadata } from "@/lib/relay";
+import { Spinner } from "@/components/spinner";
 
 export function NewListingForm() {
   const router = useRouter();
@@ -123,15 +124,15 @@ export function NewListingForm() {
       </div>
       <p className="text-xs text-slate-500">
         This is an <strong className="text-slate-300">off-chain</strong> open listing. After you accept
-        a bid, create the escrow job on the Create page with the same title/description so the metadata
+        a bid, create the paid job on the Create page with the same title/description so the metadata
         hash matches.
       </p>
       <button
         type="submit"
         disabled={submitting}
-        className="w-full rounded-md bg-teal-500 py-2 text-sm font-semibold text-slate-950 hover:bg-teal-400 disabled:opacity-50"
+        className="flex min-h-[40px] w-full items-center justify-center rounded-md bg-teal-500 py-2 text-sm font-semibold text-slate-950 hover:bg-teal-400 disabled:opacity-50"
       >
-        {submitting ? "Posting…" : "Post listing"}
+        {submitting ? <Spinner className="h-5 w-5" /> : "Post listing"}
       </button>
       {message ? <p className="text-sm text-red-400">{message}</p> : null}
       <p className="text-xs text-slate-500">

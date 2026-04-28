@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { fetchListings } from "@/lib/listings";
+import { LoadingBlock } from "@/components/spinner";
 
 export default function ListingsPage() {
   const { data, isPending, error } = useQuery({
@@ -10,7 +11,7 @@ export default function ListingsPage() {
     queryFn: () => fetchListings("open"),
   });
 
-  if (isPending) return <p className="text-sm text-slate-500">Loading…</p>;
+  if (isPending) return <LoadingBlock label="Loading listings…" />;
   if (error) {
     return (
       <p className="text-sm text-red-400">
@@ -76,7 +77,7 @@ export default function ListingsPage() {
 
       <p className="text-center text-xs text-slate-500">
         <Link href="/create" className="text-teal-400/90 hover:text-teal-300">
-          Already have provider + evaluator? Direct escrow →
+          Already have provider + evaluator? Create a job directly →
         </Link>
       </p>
     </div>

@@ -582,9 +582,31 @@ async function printJob(jobIdArg: string) {
 
 async function readDeliverable(jobIdArg: string) {
   const jobId = Number(jobIdArg);
+  if (!Number.isFinite(jobId) || jobId <= 0) {
+    throw new Error("read_deliverable: jobId must be a positive number.");
+  }
   const res = await fetch(`${CLARITY_API_URL}/relay/deliverables/${jobId}`);
   if (!res.ok) {
-    throw new Error(`Failed to fetch deliverable: ${res.status}`);
+    if (res.status === 404) {
+      let st: string;
+      try {
+        const job = await getJob(BigInt(jobId));
+        st = statusFromIndex(job.status);
+      } catch {
+        st = "unknown (could not read on-chain job — check CLARITY_RPC_URL and CLARITY_ESCROW_ADDRESS).";
+      }
+      const preSubmit = st === "open" || st === "funded" || st === "expired" || st === "rejected";
+      if (preSubmit) {
+        throw new Error(
+          `No deliverable on the relay for job ${jobId} (GET 404). On-chain status is "${st}" — plaintext is stored only after a successful submit_work and POST /relay/deliverables.`,
+        );
+      }
+      throw new Error(
+        `No plaintext on the relay for job ${jobId} (GET 404) even though the chain is "${st}". ` +
+          `The relay stores deliverables in memory: use the same CLARITY_API_URL the provider used, restart loses data — re-run submit_work so MCP POSTs the text again, or POST /relay/deliverables with the same body.`,
+      );
+    }
+    throw new Error(`Failed to fetch deliverable: HTTP ${res.status}`);
   }
   const payload = (await res.json()) as { plaintext?: string };
   console.log(JSON.stringify({ jobId, plaintext: payload.plaintext ?? "" }, null, 2));

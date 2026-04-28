@@ -8,6 +8,7 @@ import { formatUnits, isAddress, parseUnits } from "viem";
 import { usdcAbi } from "@/lib/abi";
 import { getUsdcAddress } from "@/lib/env";
 import { ConnectButton } from "@/components/connect-button";
+import { Spinner } from "@/components/spinner";
 
 const DEFAULT_AMOUNT = "10000";
 
@@ -148,9 +149,9 @@ export default function FaucetPage() {
           <button
             type="submit"
             disabled={isPending || status !== "connected"}
-            className="w-full rounded-lg bg-teal-500 py-2.5 text-sm font-semibold text-slate-950 hover:bg-teal-400 disabled:opacity-50"
+            className="flex min-h-[44px] w-full items-center justify-center rounded-lg bg-teal-500 py-2.5 text-sm font-semibold text-slate-950 hover:bg-teal-400 disabled:opacity-50"
           >
-            {isPending ? "Confirm in wallet…" : "Mint mUSDC"}
+            {isPending ? <Spinner className="h-5 w-5" /> : "Mint mUSDC"}
           </button>
 
           {message ? (

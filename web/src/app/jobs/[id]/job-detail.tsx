@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useState } from "react";
 import Link from "next/link";
 import { baseSepolia } from "wagmi/chains";
 import {
@@ -24,8 +24,11 @@ import {
   type RelayJob,
 } from "@/lib/relay";
 import { onChainStatusLabel } from "@/lib/status";
+import { LoadingBlock, Spinner } from "@/components/spinner";
 
 const card = "cl-card-strong rounded-xl p-4";
+
+type TxKind = "submit" | "complete" | "reject" | "refund" | null;
 const TX_GAS = 500_000n;
 
 function ExplorerTx({ hash }: { hash: string }) {
@@ -66,8 +69,11 @@ export function JobDetail({ id: idStr }: { id: string }) {
   const [submitText, setSubmitText] = useState("");
   const [deliverableText, setDeliverableText] = useState<string | null>(null);
   const [deliverableLoadErr, setDeliverableLoadErr] = useState<string | null>(null);
+  const [deliverableLoading, setDeliverableLoading] = useState(false);
   const [syncBusy, setSyncBusy] = useState(false);
   const [refreshBusy, setRefreshBusy] = useState(false);
+  const [txKind, setTxKind] = useState<TxKind>(null);
+  const txBusy = txKind !== null || isWriting;
 
   const loadRelay = useCallback(async () => {
     setRelayLoading(true);
@@ -89,6 +95,7 @@ export function JobDetail({ id: idStr }: { id: string }) {
   const {
     data: onchain,
     error: readErr,
+    isPending: onchainPending,
     refetch: refetchOnchain,
   } = useReadContract({
     address: escrow ?? "0x0000000000000000000000000000000000000000",
@@ -119,16 +126,18 @@ export function JobDetail({ id: idStr }: { id: string }) {
     return () => window.clearInterval(id);
   }, [jobId, onchain, loadRelay]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const row = onchain;
     const st = row && Array.isArray(row) ? Number((row as readonly unknown[])[7]) : -1;
     if (st < 2) {
       setDeliverableText(null);
       setDeliverableLoadErr(null);
+      setDeliverableLoading(false);
       return;
     }
     let cancelled = false;
     setDeliverableLoadErr(null);
+    setDeliverableLoading(true);
     void fetchDeliverablePlaintext(jobId)
       .then((t) => {
         if (!cancelled) {
@@ -139,6 +148,9 @@ export function JobDetail({ id: idStr }: { id: string }) {
         if (!cancelled) {
           setDeliverableLoadErr(e instanceof Error ? e.message : "Load failed");
         }
+      })
+      .finally(() => {
+        if (!cancelled) setDeliverableLoading(false);
       });
     return () => {
       cancelled = true;
@@ -225,6 +237,7 @@ export function JobDetail({ id: idStr }: { id: string }) {
       setActionMsg("Enter deliverable text.");
       return;
     }
+    setTxKind("submit");
     try {
       const trimmed = submitText.trim();
       const cid = deliverableCidFromPlaintext(trimmed);
@@ -243,6 +256,8 @@ export function JobDetail({ id: idStr }: { id: string }) {
       setActionMsg("Work submitted.");
     } catch (e) {
       setActionMsg(e instanceof Error ? e.message : "Submit failed");
+    } finally {
+      setTxKind(null);
     }
   };
 
@@ -260,6 +275,7 @@ export function JobDetail({ id: idStr }: { id: string }) {
       setActionMsg("Only the on-chain evaluator can approve.");
       return;
     }
+    setTxKind("complete");
     try {
       const hash = await writeContractAsync({
         address: escrow,
@@ -274,6 +290,8 @@ export function JobDetail({ id: idStr }: { id: string }) {
       setActionMsg("Payment released.");
     } catch (e) {
       setActionMsg(e instanceof Error ? e.message : "Complete failed");
+    } finally {
+      setTxKind(null);
     }
   };
 
@@ -291,6 +309,7 @@ export function JobDetail({ id: idStr }: { id: string }) {
       setActionMsg("Only the on-chain evaluator can reject.");
       return;
     }
+    setTxKind("reject");
     try {
       const hash = await writeContractAsync({
         address: escrow,
@@ -305,6 +324,8 @@ export function JobDetail({ id: idStr }: { id: string }) {
       setActionMsg("Work rejected; client refunded.");
     } catch (e) {
       setActionMsg(e instanceof Error ? e.message : "Reject failed");
+    } finally {
+      setTxKind(null);
     }
   };
 
@@ -314,6 +335,7 @@ export function JobDetail({ id: idStr }: { id: string }) {
       setActionMsg("Connect the client wallet on Base Sepolia.");
       return;
     }
+    setTxKind("refund");
     try {
       const hash = await writeContractAsync({
         address: escrow,
@@ -328,6 +350,8 @@ export function JobDetail({ id: idStr }: { id: string }) {
       setActionMsg("Refund claimed (job expired without submission).");
     } catch (e) {
       setActionMsg(e instanceof Error ? e.message : "Refund failed");
+    } finally {
+      setTxKind(null);
     }
   };
 
@@ -399,17 +423,17 @@ export function JobDetail({ id: idStr }: { id: string }) {
               type="button"
               disabled={refreshBusy || relayLoading}
               onClick={() => void runRefresh()}
-              className="rounded-lg border border-white/15 px-3 py-1.5 text-xs text-slate-200 hover:bg-white/5 disabled:opacity-50"
+              className="inline-flex min-h-[34px] min-w-[96px] items-center justify-center rounded-lg border border-white/15 px-3 py-1.5 text-xs text-slate-200 hover:bg-white/5 disabled:opacity-50"
             >
-              {refreshBusy ? "Refreshing…" : "Refresh"}
+              {refreshBusy ? <Spinner className="h-4 w-4" /> : "Refresh"}
             </button>
             <button
               type="button"
               disabled={syncBusy}
               onClick={() => void runSyncRelayFromChain()}
-              className="rounded-lg border border-teal-500/35 bg-teal-950/40 px-3 py-1.5 text-xs font-medium text-teal-100 hover:bg-teal-900/50 disabled:opacity-50"
+              className="inline-flex min-h-[34px] min-w-[148px] items-center justify-center rounded-lg border border-teal-500/35 bg-teal-950/40 px-3 py-1.5 text-xs font-medium text-teal-100 hover:bg-teal-900/50 disabled:opacity-50"
             >
-              {syncBusy ? "Syncing…" : "Sync relay from chain"}
+              {syncBusy ? <Spinner className="h-4 w-4" /> : "Sync relay from chain"}
             </button>
           </div>
         ) : null}
@@ -479,8 +503,10 @@ npm run start -- sync_job ${jobId}`}
         <h2 className="text-xs font-medium uppercase tracking-wider text-slate-500">On-chain</h2>
         {readErr ? (
           <p className="mt-2 text-sm text-amber-200/90">{readErr.message}</p>
-        ) : onchain == null ? (
-          <p className="mt-2 text-sm text-slate-500">Loading or no job…</p>
+        ) : onchain == null || onchainPending ? (
+          <div className="mt-2">
+            <LoadingBlock />
+          </div>
         ) : (
           <dl className="mt-3 grid gap-2 text-sm">
             <div className="flex justify-between gap-4">
@@ -519,7 +545,9 @@ npm run start -- sync_job ${jobId}`}
           {deliverableLoadErr ? (
             <p className="text-sm text-amber-200/90">{deliverableLoadErr}</p>
           ) : null}
-          {deliverableText != null ? (
+          {deliverableLoading ? (
+            <LoadingBlock label="Loading submitted work…" />
+          ) : deliverableText != null ? (
             <pre className="max-h-80 overflow-auto whitespace-pre-wrap rounded-md border border-white/10 bg-slate-950/80 p-3 text-sm text-slate-200">
               {deliverableText}
             </pre>
@@ -550,11 +578,11 @@ npm run start -- sync_job ${jobId}`}
           />
           <button
             type="button"
-            disabled={isWriting}
+            disabled={txBusy}
             onClick={() => void runSubmitWork()}
-            className="rounded-lg bg-teal-600 px-4 py-2 text-sm font-semibold text-white hover:bg-teal-500 disabled:opacity-50"
+            className="inline-flex min-h-[40px] min-w-[120px] items-center justify-center rounded-lg bg-teal-600 px-4 py-2 text-sm font-semibold text-white hover:bg-teal-500 disabled:opacity-50"
           >
-            {isWriting ? "Submitting…" : "Submit work"}
+            {txKind === "submit" ? <Spinner className="h-5 w-5" /> : "Submit work"}
           </button>
         </section>
       ) : null}
@@ -567,11 +595,15 @@ npm run start -- sync_job ${jobId}`}
           {fundedExpired ? (
             <button
               type="button"
-              disabled={isWriting}
+              disabled={txBusy}
               onClick={() => void runClaimRefund()}
-              className="rounded-lg border border-amber-500/40 bg-amber-950/40 px-4 py-2 text-sm text-amber-100 hover:bg-amber-900/50 disabled:opacity-50"
+              className="inline-flex min-h-[40px] items-center justify-center rounded-lg border border-amber-500/40 bg-amber-950/40 px-4 py-2 text-sm text-amber-100 hover:bg-amber-900/50 disabled:opacity-50"
             >
-              {isWriting ? "Claiming…" : "Claim refund (escrow was funded, deadline passed)"}
+              {txKind === "refund" ? (
+                <Spinner className="h-5 w-5" />
+              ) : (
+                "Claim refund (funded, deadline passed)"
+              )}
             </button>
           ) : (
             <p className="text-sm text-slate-400">
@@ -595,19 +627,19 @@ npm run start -- sync_job ${jobId}`}
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
-              disabled={isWriting}
+              disabled={txBusy}
               onClick={() => void runComplete()}
-              className="rounded-lg bg-teal-600 px-4 py-2 text-sm font-semibold text-white hover:bg-teal-500 disabled:opacity-50"
+              className="inline-flex min-h-[40px] min-w-[180px] items-center justify-center rounded-lg bg-teal-600 px-4 py-2 text-sm font-semibold text-white hover:bg-teal-500 disabled:opacity-50"
             >
-              {isWriting ? "Confirming…" : "Approve and release payment"}
+              {txKind === "complete" ? <Spinner className="h-5 w-5" /> : "Approve and release payment"}
             </button>
             <button
               type="button"
-              disabled={isWriting}
+              disabled={txBusy}
               onClick={() => void runReject()}
-              className="rounded-lg border border-red-500/40 bg-red-950/30 px-4 py-2 text-sm text-red-100 hover:bg-red-900/40 disabled:opacity-50"
+              className="inline-flex min-h-[40px] min-w-[160px] items-center justify-center rounded-lg border border-red-500/40 bg-red-950/30 px-4 py-2 text-sm text-red-100 hover:bg-red-900/40 disabled:opacity-50"
             >
-              {isWriting ? "Sending…" : "Reject and refund client"}
+              {txKind === "reject" ? <Spinner className="h-5 w-5" /> : "Reject and refund client"}
             </button>
           </div>
         </section>
@@ -646,7 +678,11 @@ npm run start -- sync_job ${jobId}`}
         </section>
       )}
 
-      {relayLoading && <p className="text-sm text-slate-500">Loading relay…</p>}
+      {relayLoading ? (
+        <div className="py-1">
+          <LoadingBlock label="Loading relay…" />
+        </div>
+      ) : null}
 
       {!relayLoading && relay && relay.timeline.length > 0 && (
         <section>

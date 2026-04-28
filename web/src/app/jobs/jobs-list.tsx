@@ -6,12 +6,15 @@ import { baseSepolia } from "wagmi/chains";
 import { usePublicClient } from "wagmi";
 import { clarityEscrowAbi } from "@/lib/abi";
 import { getEscrowAddress } from "@/lib/env";
+import { fetchJobTitleForList } from "@/lib/relay";
 import { onChainStatusLabel } from "@/lib/status";
+import { LoadingBlock } from "@/components/spinner";
 
 type ListedJob = {
   id: number;
   status: string;
   clientShort: string;
+  title: string | null;
 };
 
 export function JobsList() {
@@ -47,7 +50,8 @@ export function JobsList() {
         allowFailure: true,
       });
 
-      const rows: ListedJob[] = [];
+      const baseRows: { id: number; status: string; clientShort: string; descriptionCid: string }[] =
+        [];
       for (let i = 0; i < n; i++) {
         const item = results[i];
         if (!item || item.status !== "success") continue;
@@ -55,13 +59,27 @@ export function JobsList() {
         if (!Array.isArray(tuple) || tuple.length < 8) continue;
         const client = String(tuple[0]);
         const statusIdx = Number(tuple[7]);
-        rows.push({
+        const descriptionCid = String(tuple[5]);
+        baseRows.push({
           id: i + 1,
           status: onChainStatusLabel(statusIdx),
           clientShort: `${client.slice(0, 6)}…${client.slice(-4)}`,
+          descriptionCid,
         });
       }
-      return rows;
+
+      const withTitles = await Promise.all(
+        baseRows.map(async (r) => {
+          const title = await fetchJobTitleForList(r.id, r.descriptionCid);
+          return {
+            id: r.id,
+            status: r.status,
+            clientShort: r.clientShort,
+            title,
+          } satisfies ListedJob;
+        }),
+      );
+      return withTitles;
     },
   });
 
@@ -84,11 +102,11 @@ export function JobsList() {
   }
 
   if (isPending || jobs === undefined) {
-    return <p className="text-sm text-slate-500">Loading…</p>;
+    return <LoadingBlock />;
   }
 
   if (jobs.length === 0) {
-    return <p className="text-sm text-slate-500">No jobs on this escrow yet.</p>;
+    return <p className="text-sm text-slate-500">No jobs yet.</p>;
   }
 
   return (
@@ -100,7 +118,10 @@ export function JobsList() {
             className="flex items-center justify-between gap-3 px-4 py-3 transition-colors hover:bg-white/5"
           >
             <div className="flex min-w-0 flex-col gap-0.5">
-              <span className="font-mono text-sm text-slate-100">#{j.id}</span>
+              {j.title ? (
+                <span className="truncate text-sm font-medium text-slate-100">{j.title}</span>
+              ) : null}
+              <span className="font-mono text-sm text-slate-300">#{j.id}</span>
               <span className="truncate font-mono text-xs text-slate-500">{j.clientShort}</span>
             </div>
             <span className="shrink-0 rounded-md bg-white/10 px-2 py-0.5 text-xs text-slate-300">

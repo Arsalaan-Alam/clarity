@@ -15,6 +15,7 @@ import {
   type MarketListing,
 } from "@/lib/listings";
 import { ConnectButton } from "@/components/connect-button";
+import { LoadingBlock, Spinner } from "@/components/spinner";
 
 const card = "cl-card-strong rounded-xl p-4";
 
@@ -26,7 +27,8 @@ export function ListingDetailMarket({ id }: { id: number }) {
   const [err, setErr] = useState<string | null>(null);
   const [bidMsg, setBidMsg] = useState("");
   const [evalAddr, setEvalAddr] = useState("");
-  const [busy, setBusy] = useState(false);
+  type Pending = null | "cancel" | "bid" | { accept: number };
+  const [pending, setPending] = useState<Pending>(null);
   const [localMsg, setLocalMsg] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -46,7 +48,7 @@ export function ListingDetailMarket({ id }: { id: number }) {
     void load();
   }, [load]);
 
-  if (loading) return <p className="text-sm text-slate-500">Loading…</p>;
+  if (loading) return <LoadingBlock label="Loading listing…" />;
   if (err || !data) return <p className="text-sm text-red-400">{err ?? "Not found"}</p>;
 
   const { listing, bids } = data;
@@ -70,7 +72,7 @@ export function ListingDetailMarket({ id }: { id: number }) {
   const submitBid = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!address || !bidMsg.trim()) return;
-    setBusy(true);
+    setPending("bid");
     setLocalMsg(null);
     try {
       await postListingBid(listing.id, { agentAddress: address, message: bidMsg.trim() });
@@ -79,7 +81,7 @@ export function ListingDetailMarket({ id }: { id: number }) {
     } catch (x) {
       setLocalMsg(x instanceof Error ? x.message : "Bid failed");
     } finally {
-      setBusy(false);
+      setPending(null);
     }
   };
 
@@ -97,7 +99,7 @@ export function ListingDetailMarket({ id }: { id: number }) {
       );
       return;
     }
-    setBusy(true);
+    setPending({ accept: bidId });
     setLocalMsg(null);
     try {
       await acceptListingBid({
@@ -112,7 +114,7 @@ export function ListingDetailMarket({ id }: { id: number }) {
     } catch (x) {
       setLocalMsg(x instanceof Error ? x.message : "Accept failed");
     } finally {
-      setBusy(false);
+      setPending(null);
     }
   };
 
@@ -124,7 +126,7 @@ export function ListingDetailMarket({ id }: { id: number }) {
       );
       return;
     }
-    setBusy(true);
+    setPending("cancel");
     setLocalMsg(null);
     try {
       await cancelListing(listing.id, address, ownerToken);
@@ -132,7 +134,7 @@ export function ListingDetailMarket({ id }: { id: number }) {
     } catch (x) {
       setLocalMsg(x instanceof Error ? x.message : "Cancel failed");
     } finally {
-      setBusy(false);
+      setPending(null);
     }
   };
 
@@ -172,7 +174,7 @@ export function ListingDetailMarket({ id }: { id: number }) {
             </li>
             <li>
               Click <strong className="text-white">Accept this bid</strong>. Then use{" "}
-              <strong className="text-white">Create paid job</strong> when it appears to fund escrow in
+              <strong className="text-white">Create paid job</strong> when it appears to fund it in
               the app.
             </li>
           </ol>
@@ -212,14 +214,14 @@ export function ListingDetailMarket({ id }: { id: number }) {
       {listing.status === "assigned" && createUrl ? (
         <section className="rounded-xl border border-teal-500/25 bg-teal-950/30 p-4">
           <p className="text-sm text-slate-200">
-            Provider and evaluator are set. Create the on-chain escrow job next (metadata must
-            match this listing).
+            Provider and evaluator are set. Create the on-chain job next (metadata must match this
+            listing).
           </p>
           <Link
             href={createUrl}
             className="mt-3 inline-block rounded-lg bg-teal-500 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-teal-400"
           >
-            Create escrow job
+            Create job
           </Link>
         </section>
       ) : null}
@@ -227,7 +229,7 @@ export function ListingDetailMarket({ id }: { id: number }) {
       {listing.status === "onchain" && listing.escrowJobId ? (
         <section className="rounded-xl border border-teal-500/25 bg-teal-950/30 p-4">
           <p className="text-sm text-slate-200">
-            This listing is linked to escrow job{" "}
+            This listing is linked to job{" "}
             <span className="font-mono text-teal-200">#{listing.escrowJobId}</span>. Open the job to
             submit work, approve, or reject.
           </p>
@@ -244,11 +246,11 @@ export function ListingDetailMarket({ id }: { id: number }) {
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
           <button
             type="button"
-            disabled={busy}
+            disabled={pending !== null}
             onClick={() => void runCancel()}
-            className="rounded-lg border border-white/15 px-3 py-1.5 text-sm text-slate-200 hover:bg-white/5 disabled:opacity-50"
+            className="inline-flex min-h-[36px] min-w-[120px] items-center justify-center rounded-lg border border-white/15 px-3 py-1.5 text-sm text-slate-200 hover:bg-white/5 disabled:opacity-50"
           >
-            Cancel listing
+            {pending === "cancel" ? <Spinner className="h-4 w-4" /> : "Cancel listing"}
           </button>
           {!ownerToken ? (
             <p className="text-xs text-amber-200/90">
@@ -293,10 +295,14 @@ export function ListingDetailMarket({ id }: { id: number }) {
                     />
                     <button
                       type="submit"
-                      disabled={busy || !ownerToken}
-                      className="rounded-md bg-teal-500 px-3 py-1.5 text-xs font-semibold text-slate-950 hover:bg-teal-400 disabled:opacity-50"
+                      disabled={pending !== null || !ownerToken}
+                      className="inline-flex min-h-[32px] min-w-[120px] items-center justify-center rounded-md bg-teal-500 px-3 py-1.5 text-xs font-semibold text-slate-950 hover:bg-teal-400 disabled:opacity-50"
                     >
-                      Accept this bid
+                      {pending && typeof pending === "object" && pending.accept === b.id ? (
+                        <Spinner className="h-4 w-4" />
+                      ) : (
+                        "Accept this bid"
+                      )}
                     </button>
                   </form>
                 ) : null}
@@ -321,10 +327,14 @@ export function ListingDetailMarket({ id }: { id: number }) {
               />
               <button
                 type="submit"
-                disabled={busy}
-                className="rounded-lg bg-teal-500 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-teal-400 disabled:opacity-50"
+                disabled={pending !== null}
+                className="inline-flex min-h-[40px] min-w-[160px] items-center justify-center rounded-lg bg-teal-500 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-teal-400 disabled:opacity-50"
               >
-                Submit bid as {address?.slice(0, 6)}…
+                {pending === "bid" ? (
+                  <Spinner className="h-5 w-5" />
+                ) : (
+                  `Submit bid as ${address?.slice(0, 6)}…`
+                )}
               </button>
             </form>
           ) : status !== "connected" ? (
@@ -343,7 +353,7 @@ export function ListingDetailMarket({ id }: { id: number }) {
                 onClick={() => switchChain({ chainId: baseSepolia.id })}
                 className="rounded-lg bg-teal-500 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-teal-400 disabled:opacity-50"
               >
-                {isSwitching ? "Switching…" : "Switch to Base Sepolia"}
+                {isSwitching ? <Spinner className="h-5 w-5" /> : "Switch to Base Sepolia"}
               </button>
             </div>
           ) : isClient ? (

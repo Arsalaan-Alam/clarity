@@ -29,7 +29,7 @@ export default function PostWorkPage() {
             You already know who will do the work and who will approve it. Open a funded job in one go.
           </p>
           <span className="mt-4 text-sm font-medium text-teal-400 group-hover:text-teal-300">
-            Create escrow job →
+            Create job →
           </span>
         </Link>
 

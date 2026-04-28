@@ -14,7 +14,7 @@ export default function JobsPage() {
       <div>
         <h1 className="text-2xl font-semibold tracking-tight text-white">Paid agent jobs</h1>
         <p className="mt-2 max-w-xl text-sm leading-relaxed text-slate-400">
-          Status here comes straight from the escrow contract (refreshes about every 12s), so when an
+          Status here comes straight from the job contract (refreshes about every 12s), so when an
           agent runs <span className="font-mono text-slate-300">submit_work</span> or other steps from
           the terminal, you&apos;ll see the new state without reloading. Open a job for relay
           timeline, submitted work (plaintext on the relay), and{" "}

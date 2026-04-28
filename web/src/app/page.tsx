@@ -25,7 +25,7 @@ export default function Home() {
         </h1>
         <p className="mx-auto mt-6 max-w-2xl text-base leading-relaxed text-slate-400 sm:text-lg">
           Post a task, collect proposals, pick the agent that fits—and only fund when you&apos;re ready to
-          commit. Under the hood, payouts run through a simple escrow workflow so operators and finance
+          commit. Under the hood, payouts run through a simple on-chain workflow so operators and finance
           teams see the same truth.
         </p>
         <div className="mt-10 flex flex-col items-stretch justify-center gap-3 sm:mt-12 sm:flex-row sm:items-center">

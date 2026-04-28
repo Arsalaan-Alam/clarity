@@ -25,8 +25,10 @@ import {
   type MarketListing,
 } from "@/lib/listings";
 import { onChainStatusLabel } from "@/lib/status";
+import { LoadingBlock, Spinner } from "@/components/spinner";
 
 type Step = "form" | "budget" | "done";
+type TxOp = "none" | "create" | "budget" | "fund";
 
 /** Explicit gas avoids flaky `eth_estimateGas` on some Base Sepolia RPCs. */
 const TX_GAS = 500_000n;
@@ -58,8 +60,10 @@ export function CreateJobForm() {
   /** When set, `createJob` uses this listing’s `contentHash` (same bytes32 as the marketplace row). */
   const [listingSource, setListingSource] = useState<MarketListing | null>(null);
   const [listingLoadErr, setListingLoadErr] = useState<string | null>(null);
+  const [txOp, setTxOp] = useState<TxOp>("none");
 
   const { writeContractAsync, isPending: isWriting } = useWriteContract();
+  const txBusy = txOp !== "none" || isWriting;
 
   useEffect(() => {
     const p = searchParams.get("provider");
@@ -79,6 +83,8 @@ export function CreateJobForm() {
         setTitle(listing.title);
         setLongDescription(listing.description);
         setTagsCsv(listing.tags.join(", "));
+        const hint = listing.budgetHintUsdc?.trim();
+        if (hint) setBudget(hint);
       })
       .catch(() => {
         setListingSource(null);
@@ -187,101 +193,106 @@ export function CreateJobForm() {
         return;
       }
     }
-    const hash = await writeContractAsync({
-      address: escrow,
-      abi: clarityEscrowAbi,
-      functionName: "createJob",
-      args: [provider, evaluator, expiresAt, desc],
-      gas: TX_GAS,
-      account: address,
-    });
-    await publicClient.waitForTransactionReceipt({ hash });
-    const count = await publicClient.readContract({
-      address: escrow,
-      abi: clarityEscrowAbi,
-      functionName: "jobCount",
-    });
-    const createdRow = await publicClient.readContract({
-      address: escrow,
-      abi: clarityEscrowAbi,
-      functionName: "jobs",
-      args: [count],
-    });
-    const clientFromChain = String((createdRow as readonly unknown[])[0]);
-    if (clientFromChain.toLowerCase() !== address.toLowerCase()) {
-      setMessage(
-        `On-chain client is ${clientFromChain} but the app showed ${address} as connected. ` +
-          `Use the wallet that actually signed (often whichever owns window.ethereum on this site), or create a new job after fixing extensions. Budget/fund must be sent from ${clientFromChain}.`,
-      );
-    }
-    setJobId(count);
-    setStep("budget");
+    setTxOp("create");
     try {
-      await postRelayEvent({
-        jobId: Number(count),
-        eventType: "job:created",
-        status: "open",
-        txHash: hash,
-        job: {
-          chainId: baseSepolia.id,
-          escrow,
-          client: clientFromChain,
-          provider,
-          evaluator,
-          descriptionCid: desc,
-          title: (listingSource?.title ?? title).trim(),
-          description: (listingSource?.description ?? longDescription).trim(),
-          tags:
-            listingSource?.tags ??
-            tagsCsv
-              .split(",")
-              .map((t) => t.trim())
-              .filter(Boolean),
-        },
+      const hash = await writeContractAsync({
+        address: escrow,
+        abi: clarityEscrowAbi,
+        functionName: "createJob",
+        args: [provider, evaluator, expiresAt, desc],
+        gas: TX_GAS,
+        account: address,
       });
-      if (clientFromChain.toLowerCase() === address.toLowerCase()) {
-        setMessage("Job created. Set budget, then fund.");
-      }
-      if (
-        listingIdParam &&
-        !Number.isNaN(Number(listingIdParam)) &&
-        clientFromChain.toLowerCase() === address.toLowerCase()
-      ) {
-        const lid = Number(listingIdParam);
-        const ownerToken = getStoredListingOwnerToken(lid);
-        if (ownerToken) {
-          try {
-            await linkListingToEscrow({
-              listingId: lid,
-              client: clientFromChain,
-              escrowJobId: Number(count),
-              ownerToken,
-            });
-            setListingLinkError(null);
-          } catch (linkErr) {
-            setListingLinkError(
-              linkErr instanceof Error
-                ? linkErr.message
-                : "Could not link listing to this job id.",
-            );
-          }
-        } else {
-          setListingLinkError(
-            "No listing owner key in this browser — the job is on-chain but the listing was not linked. Create the listing from this site or run MCP link_listing with --token.",
-          );
-        }
-      }
-    } catch (relayErr) {
-      const relayFail =
-        `Job #${count} is on-chain, but the relay was not updated (${relayErr instanceof Error ? relayErr.message : "error"}). ` +
-        `Open /jobs only lists relay jobs — check NEXT_PUBLIC_RELAY_URL and that the relay is running.`;
+      await publicClient.waitForTransactionReceipt({ hash });
+      const count = await publicClient.readContract({
+        address: escrow,
+        abi: clarityEscrowAbi,
+        functionName: "jobCount",
+      });
+      const createdRow = await publicClient.readContract({
+        address: escrow,
+        abi: clarityEscrowAbi,
+        functionName: "jobs",
+        args: [count],
+      });
+      const clientFromChain = String((createdRow as readonly unknown[])[0]);
       if (clientFromChain.toLowerCase() !== address.toLowerCase()) {
         setMessage(
-          `On-chain client is ${clientFromChain} but the app showed ${address} as connected. Budget/fund must use ${clientFromChain}. ${relayFail}`,
+          `On-chain client is ${clientFromChain} but the app showed ${address} as connected. ` +
+            `Use the wallet that actually signed (often whichever owns window.ethereum on this site), or create a new job after fixing extensions. Budget/fund must be sent from ${clientFromChain}.`,
         );
-      } else {
-        setMessage(relayFail);
       }
+      setJobId(count);
+      setStep("budget");
+      try {
+        await postRelayEvent({
+          jobId: Number(count),
+          eventType: "job:created",
+          status: "open",
+          txHash: hash,
+          job: {
+            chainId: baseSepolia.id,
+            escrow,
+            client: clientFromChain,
+            provider,
+            evaluator,
+            descriptionCid: desc,
+            title: (listingSource?.title ?? title).trim(),
+            description: (listingSource?.description ?? longDescription).trim(),
+            tags:
+              listingSource?.tags ??
+              tagsCsv
+                .split(",")
+                .map((t) => t.trim())
+                .filter(Boolean),
+          },
+        });
+        if (clientFromChain.toLowerCase() === address.toLowerCase()) {
+          setMessage("Job created. Set budget, then fund.");
+        }
+        if (
+          listingIdParam &&
+          !Number.isNaN(Number(listingIdParam)) &&
+          clientFromChain.toLowerCase() === address.toLowerCase()
+        ) {
+          const lid = Number(listingIdParam);
+          const ownerToken = getStoredListingOwnerToken(lid);
+          if (ownerToken) {
+            try {
+              await linkListingToEscrow({
+                listingId: lid,
+                client: clientFromChain,
+                escrowJobId: Number(count),
+                ownerToken,
+              });
+              setListingLinkError(null);
+            } catch (linkErr) {
+              setListingLinkError(
+                linkErr instanceof Error
+                  ? linkErr.message
+                  : "Could not link listing to this job id.",
+              );
+            }
+          } else {
+            setListingLinkError(
+              "No listing owner key in this browser — the job is on-chain but the listing was not linked. Create the listing from this site or run MCP link_listing with --token.",
+            );
+          }
+        }
+      } catch (relayErr) {
+        const relayFail =
+          `Job #${count} is on-chain, but the relay was not updated (${relayErr instanceof Error ? relayErr.message : "error"}). ` +
+          `Open /jobs only lists relay jobs — check NEXT_PUBLIC_RELAY_URL and that the relay is running.`;
+        if (clientFromChain.toLowerCase() !== address.toLowerCase()) {
+          setMessage(
+            `On-chain client is ${clientFromChain} but the app showed ${address} as connected. Budget/fund must use ${clientFromChain}. ${relayFail}`,
+          );
+        } else {
+          setMessage(relayFail);
+        }
+      }
+    } finally {
+      setTxOp("none");
     }
   };
 
@@ -319,42 +330,47 @@ export function CreateJobForm() {
       return;
     }
     const amount = parseUnits(budget, 6);
-    const hash = await writeContractAsync({
-      address: escrow,
-      abi: clarityEscrowAbi,
-      functionName: "setBudget",
-      args: [jobId, amount],
-      gas: TX_GAS,
-      account: address,
-    });
-    if (publicClient) {
-      await publicClient.waitForTransactionReceipt({ hash });
-    }
-    await refetchJob();
-    const rowAfter = await publicClient.readContract({
-      address: escrow,
-      abi: clarityEscrowAbi,
-      functionName: "jobs",
-      args: [jobId],
-    });
-    const r = rowAfter as readonly unknown[];
+    setTxOp("budget");
     try {
-      await postRelayEvent({
-        jobId: Number(jobId),
-        eventType: "job:budget_set",
-        status: chainStatusToRelayStatus(Number(r[7])),
-        txHash: hash,
-        job: {
-          chainId: baseSepolia.id,
-          escrow,
-          client: String(r[0]),
-          provider: String(r[1]),
-          evaluator: String(r[2]),
-          descriptionCid: String(r[5]),
-        },
+      const hash = await writeContractAsync({
+        address: escrow,
+        abi: clarityEscrowAbi,
+        functionName: "setBudget",
+        args: [jobId, amount],
+        gas: TX_GAS,
+        account: address,
       });
-    } catch {
-      /* relay optional for on-chain success */
+      if (publicClient) {
+        await publicClient.waitForTransactionReceipt({ hash });
+      }
+      await refetchJob();
+      const rowAfter = await publicClient.readContract({
+        address: escrow,
+        abi: clarityEscrowAbi,
+        functionName: "jobs",
+        args: [jobId],
+      });
+      const r = rowAfter as readonly unknown[];
+      try {
+        await postRelayEvent({
+          jobId: Number(jobId),
+          eventType: "job:budget_set",
+          status: chainStatusToRelayStatus(Number(r[7])),
+          txHash: hash,
+          job: {
+            chainId: baseSepolia.id,
+            escrow,
+            client: String(r[0]),
+            provider: String(r[1]),
+            evaluator: String(r[2]),
+            descriptionCid: String(r[5]),
+          },
+        });
+      } catch {
+        /* relay optional for on-chain success */
+      }
+    } finally {
+      setTxOp("none");
     }
   };
 
@@ -394,55 +410,60 @@ export function CreateJobForm() {
       );
       return;
     }
-    const h1 = await writeContractAsync({
-      address: usdc,
-      abi: usdcAbi,
-      functionName: "approve",
-      args: [escrow, amount],
-      gas: TX_GAS,
-      account: address,
-    });
-    if (publicClient) {
-      await publicClient.waitForTransactionReceipt({ hash: h1 });
-    }
-    const h2 = await writeContractAsync({
-      address: escrow,
-      abi: clarityEscrowAbi,
-      functionName: "fund",
-      args: [jobId, amount],
-      gas: TX_GAS,
-      account: address,
-    });
-    if (publicClient) {
-      await publicClient.waitForTransactionReceipt({ hash: h2 });
-      const rowAfter = await publicClient.readContract({
+    setTxOp("fund");
+    try {
+      const h1 = await writeContractAsync({
+        address: usdc,
+        abi: usdcAbi,
+        functionName: "approve",
+        args: [escrow, amount],
+        gas: TX_GAS,
+        account: address,
+      });
+      if (publicClient) {
+        await publicClient.waitForTransactionReceipt({ hash: h1 });
+      }
+      const h2 = await writeContractAsync({
         address: escrow,
         abi: clarityEscrowAbi,
-        functionName: "jobs",
-        args: [jobId],
+        functionName: "fund",
+        args: [jobId, amount],
+        gas: TX_GAS,
+        account: address,
       });
-      const r = rowAfter as readonly unknown[];
-      try {
-        await postRelayEvent({
-          jobId: Number(jobId),
-          eventType: "job:funded",
-          status: chainStatusToRelayStatus(Number(r[7])),
-          txHash: h2,
-          job: {
-            chainId: baseSepolia.id,
-            escrow,
-            client: String(r[0]),
-            provider: String(r[1]),
-            evaluator: String(r[2]),
-            descriptionCid: String(r[5]),
-          },
+      if (publicClient) {
+        await publicClient.waitForTransactionReceipt({ hash: h2 });
+        const rowAfter = await publicClient.readContract({
+          address: escrow,
+          abi: clarityEscrowAbi,
+          functionName: "jobs",
+          args: [jobId],
         });
-      } catch {
-        /* relay optional */
+        const r = rowAfter as readonly unknown[];
+        try {
+          await postRelayEvent({
+            jobId: Number(jobId),
+            eventType: "job:funded",
+            status: chainStatusToRelayStatus(Number(r[7])),
+            txHash: h2,
+            job: {
+              chainId: baseSepolia.id,
+              escrow,
+              client: String(r[0]),
+              provider: String(r[1]),
+              evaluator: String(r[2]),
+              descriptionCid: String(r[5]),
+            },
+          });
+        } catch {
+          /* relay optional */
+        }
       }
+      setStep("done");
+      setMessage("Funded.");
+    } finally {
+      setTxOp("none");
     }
-    setStep("done");
-    setMessage("Funded.");
   };
 
   const retryListingLink = async () => {
@@ -501,9 +522,7 @@ export function CreateJobForm() {
           <span className="font-mono">listingId</span> from the URL.
         </p>
       ) : null}
-      {listingStillLoading ? (
-        <p className="text-sm text-slate-500">Loading listing metadata…</p>
-      ) : null}
+      {listingStillLoading ? <LoadingBlock label="Loading listing…" className="py-1" /> : null}
       {step === "form" && (
         <form onSubmit={handleCreate} className="space-y-4">
           <div>
@@ -584,10 +603,10 @@ export function CreateJobForm() {
           </p>
           <button
             type="submit"
-            disabled={isWriting || listingStillLoading}
-            className="w-full rounded-md bg-teal-500 py-2 text-sm font-semibold text-slate-950 hover:bg-teal-400 disabled:opacity-50"
+            disabled={txBusy || listingStillLoading}
+            className="flex min-h-[40px] w-full items-center justify-center rounded-md bg-teal-500 py-2 text-sm font-semibold text-slate-950 hover:bg-teal-400 disabled:opacity-50"
           >
-            {isWriting ? "Submitting…" : "1. Create on-chain job"}
+            {txOp === "create" ? <Spinner className="h-5 w-5" /> : "1. Create job"}
           </button>
         </form>
       )}
@@ -652,19 +671,19 @@ export function CreateJobForm() {
             </div>
             <button
               type="submit"
-              disabled={isWriting || !canSetBudget}
-              className="w-full rounded-md border border-white/15 py-2 text-sm font-medium text-slate-200 hover:bg-white/5 disabled:opacity-50"
+              disabled={txBusy || !canSetBudget}
+              className="flex min-h-[40px] w-full items-center justify-center rounded-md border border-white/15 py-2 text-sm font-medium text-slate-200 hover:bg-white/5 disabled:opacity-50"
             >
-              2. Set budget
+              {txOp === "budget" ? <Spinner className="h-5 w-5" /> : "2. Set budget"}
             </button>
           </form>
           <form onSubmit={runFund} className="space-y-2">
             <button
               type="submit"
-              disabled={isWriting || !canFund}
-              className="w-full rounded-md bg-teal-500 py-2 text-sm font-semibold text-slate-950 hover:bg-teal-400 disabled:opacity-50"
+              disabled={txBusy || !canFund}
+              className="flex min-h-[40px] w-full items-center justify-center rounded-md bg-teal-500 py-2 text-sm font-semibold text-slate-950 hover:bg-teal-400 disabled:opacity-50"
             >
-              3. Approve + fund
+              {txOp === "fund" ? <Spinner className="h-5 w-5" /> : "3. Approve + fund"}
             </button>
           </form>
           {chainStatusIdx === 1 ? (
@@ -696,16 +715,20 @@ export function CreateJobForm() {
 
       {listingLinkError ? (
         <div className="rounded-md border border-amber-500/30 bg-amber-950/40 p-3 text-xs text-amber-100">
-          <p className="font-semibold text-amber-200">Listing ↔ escrow</p>
+          <p className="font-semibold text-amber-200">Listing ↔ paid job</p>
           <p className="mt-1 leading-relaxed">{listingLinkError}</p>
           {listingIdParam && jobId != null ? (
             <button
               type="button"
               disabled={listingLinkBusy}
               onClick={() => void retryListingLink()}
-              className="mt-2 rounded-md border border-amber-400/40 px-3 py-1.5 text-xs font-medium text-amber-100 hover:bg-amber-900/50 disabled:opacity-50"
+              className="mt-2 inline-flex min-h-[32px] min-w-[140px] items-center justify-center rounded-md border border-amber-400/40 px-3 py-1.5 text-xs font-medium text-amber-100 hover:bg-amber-900/50 disabled:opacity-50"
             >
-              {listingLinkBusy ? "Retrying…" : `Retry link to listing #${listingIdParam}`}
+              {listingLinkBusy ? (
+                <Spinner className="h-4 w-4" />
+              ) : (
+                `Retry link to listing #${listingIdParam}`
+              )}
             </button>
           ) : null}
         </div>

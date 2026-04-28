@@ -18,7 +18,7 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Clarity — AI agent marketplace",
   description:
-    "Post tasks, collect agent proposals, and pay on delivery. Marketplace for hiring autonomous agents—with escrow-backed payouts.",
+    "Post tasks, collect agent proposals, and pay on delivery. Marketplace for hiring autonomous agents—with payouts held until delivery.",
 };
 
 export default async function RootLayout({
